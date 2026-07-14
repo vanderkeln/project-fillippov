@@ -1,20 +1,15 @@
-import sys
-import os
 import pandas as pd
 import numpy as np
 from scipy.stats import pearsonr
 import matplotlib.pyplot as plt
-from PyQt5.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QLineEdit, QPushButton, QFileDialog, QTabWidget,
-    QTextEdit, QTableWidget, QTableWidgetItem, QComboBox,
-    QScrollArea, QFrame, QGridLayout, QGroupBox, QMessageBox
-)
-from PyQt5.QtCore import Qt, QThread, pyqtSignal
-from PyQt5.QtGui import QPixmap
+import os
 import re
 import warnings
 warnings.filterwarnings('ignore')
+
+# ============================================================
+#  ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+# ============================================================
 
 def read_data(file_path, sheet_name):
     df = pd.read_excel(file_path, sheet_name=sheet_name, header=0)
@@ -95,6 +90,10 @@ def evaluate_simplex(expr, values):
         return float(result)
     except:
         return np.nan
+
+# ============================================================
+#  ОСНОВНОЙ КЛАСС АНАЛИЗАТОРА
+# ============================================================
 
 class EngineAnalyzer:
     def __init__(self, file_path, sheet_name, numerator, denominator, poly_deg, k_iqr):
@@ -358,251 +357,3 @@ class EngineAnalyzer:
         plt.tight_layout()
         plt.savefig(os.path.join(self.plot_dir, 'simplex_trends.png'), dpi=150)
         plt.close()
-
-# ============================================================
-#  GUI НА PYQT5
-# ============================================================
-
-class AnalysisThread(QThread):
-    log_signal = pyqtSignal(str)
-    finished_signal = pyqtSignal(bool)
-
-    def __init__(self, file_path, sheet_name, numerator, denominator, poly_deg, k_iqr):
-        super().__init__()
-        self.file_path = file_path
-        self.sheet_name = sheet_name
-        self.numerator = numerator
-        self.denominator = denominator
-        self.poly_deg = poly_deg
-        self.k_iqr = k_iqr
-
-    def run(self):
-        analyzer = EngineAnalyzer(
-            self.file_path, self.sheet_name,
-            self.numerator, self.denominator,
-            self.poly_deg, self.k_iqr
-        )
-        success = analyzer.run(log_callback=self.log_signal.emit)
-        self.finished_signal.emit(success)
-
-
-class MainWindow(QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("Диагностический анализ двигателя")
-        self.setGeometry(100, 100, 1000, 700)
-
-        # Центральный виджет и вкладки
-        central = QWidget()
-        self.setCentralWidget(central)
-        main_layout = QVBoxLayout(central)
-
-        # Вкладки
-        self.tabs = QTabWidget()
-        main_layout.addWidget(self.tabs)
-
-        # Вкладка "Настройки"
-        self.settings_tab = QWidget()
-        self.tabs.addTab(self.settings_tab, "Настройки")
-        self.init_settings_tab()
-
-        # Вкладка "Графики"
-        self.plots_tab = QWidget()
-        self.tabs.addTab(self.plots_tab, "Графики")
-        self.init_plots_tab()
-
-        # Вкладка "Результаты"
-        self.results_tab = QWidget()
-        self.tabs.addTab(self.results_tab, "Результаты")
-        self.init_results_tab()
-
-        # Вкладка "Лог"
-        self.log_tab = QWidget()
-        self.tabs.addTab(self.log_tab, "Лог")
-        self.init_log_tab()
-
-        # Статус-бар
-        self.statusBar().showMessage("Готов")
-
-    def init_settings_tab(self):
-        layout = QVBoxLayout(self.settings_tab)
-
-        # Группа файла
-        file_group = QGroupBox("Исходные данные")
-        file_layout = QGridLayout()
-        file_group.setLayout(file_layout)
-
-        file_layout.addWidget(QLabel("Файл Excel:"), 0, 0)
-        self.file_edit = QLineEdit()
-        self.file_edit.setPlaceholderText("Выберите файл...")
-        file_layout.addWidget(self.file_edit, 0, 1)
-        self.file_btn = QPushButton("Обзор...")
-        self.file_btn.clicked.connect(self.browse_file)
-        file_layout.addWidget(self.file_btn, 0, 2)
-
-        file_layout.addWidget(QLabel("Имя листа:"), 1, 0)
-        self.sheet_edit = QLineEdit("DG1")
-        file_layout.addWidget(self.sheet_edit, 1, 1)
-
-        # Группа параметров симплекса
-        sim_group = QGroupBox("Симплекс")
-        sim_layout = QGridLayout()
-        sim_group.setLayout(sim_layout)
-
-        sim_layout.addWidget(QLabel("Числитель:"), 0, 0)
-        self.num_edit = QLineEdit("Pz")
-        sim_layout.addWidget(self.num_edit, 0, 1)
-
-        sim_layout.addWidget(QLabel("Знаменатель:"), 1, 0)
-        self.den_edit = QLineEdit("Index")
-        sim_layout.addWidget(self.den_edit, 1, 1)
-
-        sim_layout.addWidget(QLabel("Степень полинома (1 или 2):"), 2, 0)
-        self.deg_edit = QLineEdit("2")
-        sim_layout.addWidget(self.deg_edit, 2, 1)
-
-        sim_layout.addWidget(QLabel("Коэффициент IQR (k):"), 3, 0)
-        self.k_edit = QLineEdit("0.9")
-        sim_layout.addWidget(self.k_edit, 3, 1)
-
-        # Кнопка запуска
-        self.run_btn = QPushButton("Запустить анализ")
-        self.run_btn.clicked.connect(self.run_analysis)
-        self.run_btn.setStyleSheet("font-weight: bold; background-color: #4CAF50; color: white; padding: 10px;")
-
-        # Добавляем всё в основной layout
-        layout.addWidget(file_group)
-        layout.addWidget(sim_group)
-        layout.addWidget(self.run_btn)
-        layout.addStretch()
-
-    def init_plots_tab(self):
-        layout = QVBoxLayout(self.plots_tab)
-        self.plots_scroll = QScrollArea()
-        self.plots_scroll.setWidgetResizable(True)
-        self.plots_container = QWidget()
-        self.plots_layout = QVBoxLayout(self.plots_container)
-        self.plots_scroll.setWidget(self.plots_container)
-        layout.addWidget(self.plots_scroll)
-
-    def init_results_tab(self):
-        layout = QVBoxLayout(self.results_tab)
-        self.results_combo = QComboBox()
-        self.results_combo.addItems(["Averages", "Simplex", "Polynomials", "Correlations", "PartialCorr"])
-        self.results_combo.currentIndexChanged.connect(self.load_result_sheet)
-        layout.addWidget(self.results_combo)
-
-        self.results_table = QTableWidget()
-        layout.addWidget(self.results_table)
-
-    def init_log_tab(self):
-        layout = QVBoxLayout(self.log_tab)
-        self.log_text = QTextEdit()
-        self.log_text.setReadOnly(True)
-        layout.addWidget(self.log_text)
-
-    def browse_file(self):
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "Выберите Excel-файл", "",
-            "Excel files (*.xlsx *.xls)"
-        )
-        if file_path:
-            self.file_edit.setText(file_path)
-
-    def run_analysis(self):
-        # Сбор параметров
-        file_path = self.file_edit.text().strip()
-        if not file_path or not os.path.exists(file_path):
-            QMessageBox.warning(self, "Ошибка", "Укажите существующий файл Excel.")
-            return
-
-        sheet_name = self.sheet_edit.text().strip()
-        numerator = self.num_edit.text().strip()
-        denominator = self.den_edit.text().strip()
-        try:
-            poly_deg = int(self.deg_edit.text().strip())
-            if poly_deg not in (1, 2):
-                raise ValueError
-        except:
-            QMessageBox.warning(self, "Ошибка", "Степень полинома должна быть 1 или 2.")
-            return
-        try:
-            k_iqr = float(self.k_edit.text().strip())
-        except:
-            QMessageBox.warning(self, "Ошибка", "Коэффициент IQR должен быть числом.")
-            return
-
-        # Очистка лога и графиков
-        self.log_text.clear()
-        self.clear_plots()
-
-        # Запуск в отдельном потоке
-        self.run_btn.setEnabled(False)
-        self.statusBar().showMessage("Выполняется анализ...")
-        self.thread = AnalysisThread(file_path, sheet_name, numerator, denominator, poly_deg, k_iqr)
-        self.thread.log_signal.connect(self.append_log)
-        self.thread.finished_signal.connect(self.analysis_finished)
-        self.thread.start()
-
-    def append_log(self, message):
-        self.log_text.append(message)
-
-    def clear_plots(self):
-        # Удаляем все виджеты из контейнера графиков
-        for i in reversed(range(self.plots_layout.count())):
-            widget = self.plots_layout.itemAt(i).widget()
-            if widget:
-                widget.deleteLater()
-
-    def analysis_finished(self, success):
-        self.run_btn.setEnabled(True)
-        if success:
-            self.statusBar().showMessage("Анализ завершён успешно")
-            self.load_plots()
-            self.load_result_sheet(0)  # загружаем первый лист
-            self.tabs.setCurrentIndex(1)  # переключаем на вкладку "Графики"
-        else:
-            self.statusBar().showMessage("Анализ завершён с ошибкой (см. лог)")
-
-    def load_plots(self):
-        # Загружаем PNG из папки plots
-        plot_dir = "plots"
-        if not os.path.exists(plot_dir):
-            return
-        png_files = [f for f in os.listdir(plot_dir) if f.endswith('.png')]
-        for fname in sorted(png_files):
-            label = QLabel()
-            pixmap = QPixmap(os.path.join(plot_dir, fname))
-            if not pixmap.isNull():
-                # Масштабируем под ширину, сохраняя пропорции
-                scaled = pixmap.scaledToWidth(800, Qt.SmoothTransformation)
-                label.setPixmap(scaled)
-                label.setAlignment(Qt.AlignCenter)
-                self.plots_layout.addWidget(label)
-        # Добавим растяжение снизу
-        self.plots_layout.addStretch()
-
-    def load_result_sheet(self, index):
-        sheet_name = self.results_combo.currentText()
-        excel_path = "results.xlsx"
-        if not os.path.exists(excel_path):
-            return
-        try:
-            df = pd.read_excel(excel_path, sheet_name=sheet_name)
-        except:
-            return
-        self.results_table.setRowCount(df.shape[0])
-        self.results_table.setColumnCount(df.shape[1])
-        self.results_table.setHorizontalHeaderLabels(df.columns.astype(str))
-        for i, row in df.iterrows():
-            for j, val in enumerate(row):
-                item = QTableWidgetItem(str(val))
-                self.results_table.setItem(i, j, item)
-        self.results_table.resizeColumnsToContents()
-
-
-if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    window = MainWindow()
-    window.show()
-    sys.exit(app.exec_())
