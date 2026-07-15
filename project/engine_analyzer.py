@@ -126,7 +126,7 @@ def evaluate_simplex(expr, values):
 # ============================================================
 
 class EngineAnalyzer:
-    def __init__(self, file_path, sheet_name, numerator, denominator, poly_deg, k_iqr=None, k_params=None, lang='ru'):
+    def __init__(self, file_path, sheet_name, numerator, denominator, poly_deg, k_iqr=None, k_params=None, lang='ru', translate_func=None):
         self.file_path = file_path
         self.sheet_name = sheet_name
         self.numerator = numerator
@@ -135,6 +135,7 @@ class EngineAnalyzer:
         self.k_iqr = k_iqr
         self.k_params = k_params if k_params else {}
         self.lang = lang
+        self.translate_func = translate_func
         self.df = None
         self.params = []
         self.cylinders = 0
@@ -358,31 +359,27 @@ class EngineAnalyzer:
             return False
 
     def _save_plots(self):
-        # Переводы для подписей графиков
-        if self.lang == 'ru':
-            labels = {
-                'normal': 'Нормальные',
-                'outlier': 'Выбросы',
-                'fit': 'Аппроксимация',
-                'lower': 'Нижняя граница',
-                'upper': 'Верхняя граница',
-                'filter_title': 'Фильтрация',
-                'trend_title': 'Тренды симплекса',
-                'xlabel': 'R/H',
-                'ylabel': 'Симплекс'
-            }
-        else:
-            labels = {
-                'normal': 'Normal',
-                'outlier': 'Outliers',
-                'fit': 'Fit',
-                'lower': 'Lower bound',
-                'upper': 'Upper bound',
-                'filter_title': 'Filtering',
-                'trend_title': 'Simplex trends',
-                'xlabel': 'R/H',
-                'ylabel': 'Simplex'
-            }
+        # Функция для перевода текста
+        def tr(text):
+            if self.translate_func is not None:
+                return self.translate_func(text, self.lang)
+            return text
+
+        # Подписи (оригинал на русском, будут переведены)
+        labels = {
+            'normal': 'Нормальные',
+            'outlier': 'Выбросы',
+            'fit': 'Аппроксимация',
+            'lower': 'Нижняя граница',
+            'upper': 'Верхняя граница',
+            'filter_title': 'Фильтрация',
+            'trend_title': 'Тренды симплекса',
+            'xlabel': 'R/H',
+            'ylabel': 'Симплекс'
+        }
+
+        # Переводим все подписи
+        translated = {k: tr(v) for k, v in labels.items()}
 
         # Графики фильтрации для каждого параметра
         for param in self.params:
@@ -393,9 +390,9 @@ class EngineAnalyzer:
             mask = self.filter_masks.get(param, np.ones(len(x), dtype=bool))
             fig, ax = plt.subplots(figsize=(10, 6))
             ax.scatter(x[mask], y[mask], color='blue', s=60, alpha=0.7,
-                       label=f'{labels["normal"]} (n={np.sum(mask)})')
+                       label=f'{translated["normal"]} (n={np.sum(mask)})')
             ax.scatter(x[~mask], y[~mask], color='red', s=80, alpha=0.8,
-                       label=f'{labels["outlier"]} (n={np.sum(~mask)})')
+                       label=f'{translated["outlier"]} (n={np.sum(~mask)})')
             params = self.filter_params.get(param)
             if params is not None and params['func'] is not None:
                 func = params['func']
@@ -407,12 +404,12 @@ class EngineAnalyzer:
                 y_fit = func(x_sorted)
                 lower = y_fit + (q1 - k * iqr)
                 upper = y_fit + (q3 + k * iqr)
-                ax.plot(x_sorted, y_fit, 'gray', linewidth=2, label=labels['fit'])
-                ax.plot(x_sorted, lower, 'r--', linewidth=1.5, label=labels['lower'])
-                ax.plot(x_sorted, upper, 'r--', linewidth=1.5, label=labels['upper'])
-            ax.set_xlabel(labels['xlabel'], fontsize=12)
+                ax.plot(x_sorted, y_fit, 'gray', linewidth=2, label=translated['fit'])
+                ax.plot(x_sorted, lower, 'r--', linewidth=1.5, label=translated['lower'])
+                ax.plot(x_sorted, upper, 'r--', linewidth=1.5, label=translated['upper'])
+            ax.set_xlabel(translated['xlabel'], fontsize=12)
             ax.set_ylabel(param, fontsize=12)
-            ax.set_title(f'{labels["filter_title"]} {param} (k={self._get_k_for_param(param)})', fontsize=14)
+            ax.set_title(f'{translated["filter_title"]} {param} (k={self._get_k_for_param(param)})', fontsize=14)
             ax.grid(True, linestyle='--', alpha=0.6)
             ax.legend(fontsize=10)
             plt.tight_layout()
@@ -434,9 +431,9 @@ class EngineAnalyzer:
                 x_plot = np.linspace(min(x[valid]), max(x[valid]), 100)
                 y_plot = self.poly_functions[col](x_plot)
                 ax.plot(x_plot, y_plot, color=colors[idx], linewidth=2.5, label=f'{col} (n={n_points})')
-        ax.set_xlabel(labels['xlabel'], fontsize=12)
-        ax.set_ylabel(labels['ylabel'], fontsize=12)
-        ax.set_title(f'{labels["trend_title"]} ({self.numerator}/{self.denominator})', fontsize=14)
+        ax.set_xlabel(translated['xlabel'], fontsize=12)
+        ax.set_ylabel(translated['ylabel'], fontsize=12)
+        ax.set_title(f'{translated["trend_title"]} ({self.numerator}/{self.denominator})', fontsize=14)
         ax.grid(True, linestyle='--', alpha=0.6)
         ax.legend(fontsize=10)
         plt.tight_layout()
