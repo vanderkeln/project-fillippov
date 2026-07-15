@@ -136,6 +136,7 @@ class EngineAnalyzer:
         self.cylinders = 0
         self.blocks = []
         self.avg_df = None
+        self.clean_avg_df = None
         self.filter_masks = {}
         self.filter_params = {}
         self.clean_indices = None
@@ -143,6 +144,8 @@ class EngineAnalyzer:
         self.poly_results = {}
         self.poly_functions = {}
         self.corr_results = {}
+        self.corr_params = {}          # корреляции для каждого параметра (средние)
+        self.corr_scatter_data = {}    # данные для scatter (x=R/H, y=параметр)
         self.partial_corr = {}
         self.output_excel = "results.xlsx"
         self.plot_dir = "plots"
@@ -216,8 +219,33 @@ class EngineAnalyzer:
                 self.avg_df[f"{param}_flag"] = (~mask).astype(int)
                 all_good &= mask
             self.clean_indices = all_good
+            self.clean_avg_df = self.avg_df[all_good].copy()
             if log_callback:
                 log_callback(f"После фильтрации осталось {np.sum(all_good)} блоков из {len(self.avg_df)}.")
+
+            # ---- Расчёт корреляций для всех параметров (средние) ----
+            self.corr_params = {}
+            self.corr_scatter_data = {}
+            if np.sum(all_good) >= 3:
+                x_rh = self.clean_avg_df["R/H"].values
+                for param in self.params:
+                    y_vals = self.clean_avg_df[param].values
+                    valid = ~np.isnan(y_vals)
+                    if np.sum(valid) >= 3:
+                        r, p = pearsonr(x_rh[valid], y_vals[valid])
+                        self.corr_params[param.upper()] = {"r": r, "p": p, "n": np.sum(valid)}
+                        self.corr_scatter_data[param.upper()] = {"x": x_rh[valid], "y": y_vals[valid]}
+                # Добавим корреляцию для симплекса (AVG) – уже есть, но добавим отдельно
+                if not self.simplex_df.empty:
+                    x_sim = self.simplex_df["R/H"].values
+                    y_sim = self.simplex_df["AVG"].values
+                    valid = ~np.isnan(y_sim)
+                    if np.sum(valid) >= 3:
+                        r, p = pearsonr(x_sim[valid], y_sim[valid])
+                        self.corr_params["Simplex AVG"] = {"r": r, "p": p, "n": np.sum(valid)}
+                        self.corr_scatter_data["Simplex AVG"] = {"x": x_sim[valid], "y": y_sim[valid]}
+
+            # Симплекс
             rows_simplex = []
             for idx, block in enumerate(self.blocks):
                 if not self.clean_indices[idx]:
@@ -283,7 +311,7 @@ class EngineAnalyzer:
                     r, p = pearsonr(x_clean, y_clean)
                     self.corr_results[col] = {"n": len(x_clean), "r": r, "p": p}
             if log_callback:
-                log_callback("Корреляции вычислены.")
+                log_callback("Корреляции симплекса вычислены.")
             idx_col = None
             for col in self.avg_df.columns:
                 if col.lower() == "index":
@@ -318,19 +346,19 @@ class EngineAnalyzer:
 
             # ---- Сохранение Excel с переведёнными заголовками ----
             with pd.ExcelWriter(self.output_excel, engine="openpyxl") as writer:
-                # Лист Averages
+                # Averages
                 df_avg = self.avg_df.copy()
                 header_map_avg = {
                     "R/H": self._translate_header("R/H"),
                     "DATE": self._translate_header("Date"),
                 }
                 for param in self.params:
-                    header_map_avg[param] = param.upper()  # оставляем как есть
+                    header_map_avg[param] = param.upper()
                     header_map_avg[f"{param}_flag"] = self._translate_header(f"{param.upper()} Flag")
                 df_avg.rename(columns=header_map_avg, inplace=True)
                 df_avg.to_excel(writer, sheet_name="Averages", index=False)
 
-                # Лист Simplex
+                # Simplex
                 df_sim = self.simplex_df.copy()
                 header_map_sim = {
                     "R/H": self._translate_header("R/H"),
@@ -341,7 +369,7 @@ class EngineAnalyzer:
                 df_sim.rename(columns=header_map_sim, inplace=True)
                 df_sim.to_excel(writer, sheet_name="Simplex", index=False)
 
-                # Лист Polynomials
+                # Polynomials
                 df_poly = pd.DataFrame()
                 poly_rows = []
                 for col, coeffs in self.poly_results.items():
@@ -355,7 +383,7 @@ class EngineAnalyzer:
                     df_poly.rename(columns={"Cylinder": self._translate_header("Cylinder")}, inplace=True)
                 df_poly.to_excel(writer, sheet_name="Polynomials", index=False)
 
-                # Лист Correlations
+                # Correlations (for simplex)
                 df_corr = pd.DataFrame()
                 corr_rows = []
                 for col, res in self.corr_results.items():
@@ -374,9 +402,12 @@ class EngineAnalyzer:
                         "p": self._translate_header("p-value"),
                     }
                     df_corr.rename(columns=header_map_corr, inplace=True)
+                # Добавим столбцы для корреляций параметров (для отображения в интерфейсе)
+                for param, res in self.corr_params.items():
+                    df_corr[param] = res["r"]  # добавим столбец с коэффициентом
                 df_corr.to_excel(writer, sheet_name="Correlations", index=False)
 
-                # Лист PartialCorr
+                # PartialCorr
                 df_pcorr = pd.DataFrame()
                 pcorr_rows = []
                 for col, res in self.partial_corr.items():
