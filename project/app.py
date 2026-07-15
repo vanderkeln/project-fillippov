@@ -7,10 +7,9 @@ import io
 from engine_analyzer import EngineAnalyzer, get_sheet_names
 from deep_translator import GoogleTranslator
 
-st.set_page_config(page_title="Engine Diagnostic", layout="wide")
-
-if "lang" not in st.session_state:
-    st.session_state.lang = "ru"
+# ------------------------------------------------------------------
+#  Конфигурация языка и переводов (определяется ДО использования)
+# ------------------------------------------------------------------
 
 LANGUAGES = {
     "ru": "Русский",
@@ -23,6 +22,7 @@ LANGUAGES = {
     "ko": "한국어",
 }
 
+# Англоязычные названия языков для перевода
 LANGUAGE_NAMES_EN = {
     "ru": "Russian",
     "en": "English",
@@ -34,6 +34,31 @@ LANGUAGE_NAMES_EN = {
     "ko": "Korean",
 }
 
+# Инициализация языка в session_state
+if "lang" not in st.session_state:
+    st.session_state.lang = "ru"
+
+
+@st.cache_data(ttl=3600)
+def translate_text(text, target_lang):
+    """Переводит текст с русского на целевой язык.
+       Если целевой язык 'ru', возвращает оригинал.
+    """
+    if target_lang == "ru":
+        return text
+    try:
+        return GoogleTranslator(source="ru", target=target_lang).translate(text)
+    except Exception:
+        return text
+
+
+# ------------------------------------------------------------------
+#  Интерфейс приложения
+# ------------------------------------------------------------------
+
+st.set_page_config(page_title="Engine Diagnostic", layout="wide")
+
+# Боковая панель — выбор языка
 with st.sidebar:
     st.markdown("🌐 Язык")
     lang = st.selectbox(
@@ -47,15 +72,9 @@ with st.sidebar:
         st.rerun()
 
 
-@st.cache_data(ttl=3600)
-def translate_text(text, target_lang):
-    if target_lang == "ru":
-        return text
-    try:
-        return GoogleTranslator(source="ru", target=target_lang).translate(text)
-    except Exception:
-        return text
-
+# ------------------------------------------------------------------
+#  Тексты интерфейса (будут переведены)
+# ------------------------------------------------------------------
 
 TEXTS = {
     "title": "Диагностический анализ двигателя",
@@ -96,19 +115,22 @@ TEXTS = {
     "using_sheet": "Используется лист:",
 }
 
-
+# Вспомогательная функция для перевода каждого текста в зависимости от выбранного языка
 def _(text):
     return translate_text(text, st.session_state.lang)
 
 
+# Главный заголовок
 st.title(_(TEXTS["title"]))
 
+# --- Боковая панель: остальные настройки ---
 with st.sidebar:
     st.header(_(TEXTS["data"]))
     uploaded_file = st.file_uploader(_(TEXTS["upload"]), type=["xlsx", "xls"])
     file_name_input = st.text_input(_(TEXTS["or_enter_name"]), "")
     sheet_name = st.text_input(_(TEXTS["sheet"]), "")
 
+    # Если загружен файл, показываем список листов
     if uploaded_file is not None:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
             tmp.write(uploaded_file.getbuffer())
@@ -139,6 +161,11 @@ with st.sidebar:
         k_iqr = None
 
     run_btn = st.button(_(TEXTS["run"]), type="primary", use_container_width=True)
+
+
+# ------------------------------------------------------------------
+#  Обработка файла и запуск анализа
+# ------------------------------------------------------------------
 
 file_path = None
 if uploaded_file is not None:
@@ -180,6 +207,7 @@ if file_path and run_btn:
         st.info(f"{_(TEXTS['using_sheet'])} {analyzer.used_sheet_name}")
         st.info(_(TEXTS["results_saved"]))
 
+        # Вкладки с результатами
         tab1, tab2, tab3, tab4 = st.tabs(
             [
                 _(TEXTS["tab1"]),
@@ -220,6 +248,7 @@ if file_path and run_btn:
                 if images:
                     for img in images:
                         st.image(os.path.join("plots", img), caption=img, use_column_width=True)
+                    # Создаём ZIP-архив с графиками
                     zip_buffer = io.BytesIO()
                     with zipfile.ZipFile(zip_buffer, "w") as zip_file:
                         for img in images:
@@ -244,6 +273,7 @@ if file_path and run_btn:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
 
+        # Удаление временного файла, если был загружен через uploader
         if uploaded_file is not None and os.path.exists(file_path):
             os.unlink(file_path)
 
