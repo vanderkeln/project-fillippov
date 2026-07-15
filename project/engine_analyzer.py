@@ -8,14 +8,12 @@ import warnings
 
 warnings.filterwarnings("ignore")
 
-
 def get_sheet_names(file_path):
     try:
         xl = pd.ExcelFile(file_path)
         return xl.sheet_names
     except Exception:
         return []
-
 
 def read_data(file_path, sheet_name=None):
     if sheet_name is None or sheet_name.strip() == "":
@@ -24,7 +22,6 @@ def read_data(file_path, sheet_name=None):
             sheet_name = sheet_names[0]
         else:
             raise ValueError("Не удалось найти ни одного листа в файле.")
-
     try:
         df = pd.read_excel(file_path, sheet_name=sheet_name, header=0)
     except Exception:
@@ -34,7 +31,6 @@ def read_data(file_path, sheet_name=None):
             df = pd.read_excel(file_path, sheet_name=sheet_name, header=0)
         else:
             raise ValueError("Не удалось прочитать файл. Проверьте, что файл содержит данные.")
-
     df = df.dropna(how="all").dropna(axis=1, how="all")
     df.columns = df.columns.str.strip()
     new_cols = []
@@ -50,10 +46,8 @@ def read_data(file_path, sheet_name=None):
     df.columns = new_cols
     return df, sheet_name
 
-
 def detect_cylinders(df):
     return len([col for col in df.columns if col.startswith("cyl")])
-
 
 def detect_parameters(df):
     if "parameters" not in df.columns:
@@ -61,7 +55,6 @@ def detect_parameters(df):
     params = df["parameters"].dropna().unique()
     params = [str(p).strip().lower() for p in params if isinstance(p, str)]
     return params
-
 
 def group_blocks(df, params):
     blocks = []
@@ -73,7 +66,6 @@ def group_blocks(df, params):
             block = df.iloc[start:start+n_params].copy()
             blocks.append(block)
     return blocks
-
 
 def average_block(block, params, cyl_cols):
     avg_dict = {}
@@ -89,12 +81,10 @@ def average_block(block, params, cyl_cols):
             avg_dict[p] = 0.0
     return date_val, rh_val, avg_dict
 
-
 def polynomial_fit(x, y, deg):
     coeffs = np.polyfit(x, y, deg)
     func = lambda x: np.polyval(coeffs, x)
     return func, coeffs
-
 
 def filter_outliers(x, y, deg, k):
     if len(x) < 3:
@@ -110,7 +100,6 @@ def filter_outliers(x, y, deg, k):
     mask = (residuals >= lower_bound) & (residuals <= upper_bound)
     return mask, func, q1, q3, iqr, lower_bound, upper_bound
 
-
 def evaluate_simplex(expr, values):
     try:
         expr_lower = expr.lower()
@@ -119,7 +108,6 @@ def evaluate_simplex(expr, values):
         return float(result)
     except Exception:
         return np.nan
-
 
 class EngineAnalyzer:
     def __init__(
@@ -165,6 +153,13 @@ class EngineAnalyzer:
             return self.k_iqr
         return self.k_params.get(param, 1.0)
 
+    def _translate_header(self, text):
+        if self.translate_func is not None:
+            translated = self.translate_func(text, self.lang)
+            if self.lang != "ru" and translated != text:
+                return f"{translated} ({text})"
+        return text
+
     def run(self, log_callback=None):
         try:
             if log_callback:
@@ -177,11 +172,9 @@ class EngineAnalyzer:
             if log_callback:
                 log_callback(f"Обнаружено цилиндров: {self.cylinders}")
                 log_callback(f"Обнаружены параметры: {self.params}")
-
             self.blocks = group_blocks(self.df, self.params)
             if log_callback:
                 log_callback(f"Всего блоков: {len(self.blocks)}")
-
             cyl_cols = [f"cyl{i}" for i in range(1, self.cylinders + 1)]
             rows = []
             for block in self.blocks:
@@ -192,7 +185,6 @@ class EngineAnalyzer:
             self.avg_df = pd.DataFrame(rows)
             if log_callback:
                 log_callback("Средние значения вычислены.")
-
             self.filter_masks = {}
             self.filter_params = {}
             all_good = np.ones(len(self.avg_df), dtype=bool)
@@ -226,7 +218,6 @@ class EngineAnalyzer:
             self.clean_indices = all_good
             if log_callback:
                 log_callback(f"После фильтрации осталось {np.sum(all_good)} блоков из {len(self.avg_df)}.")
-
             rows_simplex = []
             for idx, block in enumerate(self.blocks):
                 if not self.clean_indices[idx]:
@@ -264,7 +255,6 @@ class EngineAnalyzer:
             self.simplex_df = pd.DataFrame(rows_simplex)
             if log_callback:
                 log_callback(f"Симплекс вычислен для {len(self.simplex_df)} блоков.")
-
             columns = [f"cyl{i}" for i in range(1, self.cylinders + 1)] + ["AVG"]
             for col in columns:
                 x = self.simplex_df["R/H"].values
@@ -281,7 +271,6 @@ class EngineAnalyzer:
                 self.poly_functions[col] = func
             if log_callback:
                 log_callback("Полиномиальная аппроксимация выполнена.")
-
             for col in columns:
                 x = self.simplex_df["R/H"].values
                 y = self.simplex_df[col].values
@@ -295,7 +284,6 @@ class EngineAnalyzer:
                     self.corr_results[col] = {"n": len(x_clean), "r": r, "p": p}
             if log_callback:
                 log_callback("Корреляции вычислены.")
-
             idx_col = None
             for col in self.avg_df.columns:
                 if col.lower() == "index":
@@ -327,25 +315,87 @@ class EngineAnalyzer:
                 self.partial_corr = {}
 
             os.makedirs(self.plot_dir, exist_ok=True)
+
+            # ---- Сохранение Excel с переведёнными заголовками ----
             with pd.ExcelWriter(self.output_excel, engine="openpyxl") as writer:
-                self.avg_df.to_excel(writer, sheet_name="Averages", index=False)
-                self.simplex_df.to_excel(writer, sheet_name="Simplex", index=False)
+                # Лист Averages
+                df_avg = self.avg_df.copy()
+                header_map_avg = {
+                    "R/H": self._translate_header("R/H"),
+                    "DATE": self._translate_header("Date"),
+                }
+                for param in self.params:
+                    header_map_avg[param] = param.upper()  # оставляем как есть
+                    header_map_avg[f"{param}_flag"] = self._translate_header(f"{param.upper()} Flag")
+                df_avg.rename(columns=header_map_avg, inplace=True)
+                df_avg.to_excel(writer, sheet_name="Averages", index=False)
+
+                # Лист Simplex
+                df_sim = self.simplex_df.copy()
+                header_map_sim = {
+                    "R/H": self._translate_header("R/H"),
+                    "AVG": self._translate_header("Average"),
+                }
+                for i in range(1, self.cylinders + 1):
+                    header_map_sim[f"cyl{i}"] = self._translate_header(f"Cylinder {i}")
+                df_sim.rename(columns=header_map_sim, inplace=True)
+                df_sim.to_excel(writer, sheet_name="Simplex", index=False)
+
+                # Лист Polynomials
+                df_poly = pd.DataFrame()
                 poly_rows = []
                 for col, coeffs in self.poly_results.items():
                     if coeffs is not None:
-                        row = {"Cylinder": col}
+                        row = {"Cylinder": self._translate_header(col)}
                         for i, c in enumerate(coeffs[::-1]):
                             row[f"a{i}"] = c
                         poly_rows.append(row)
-                pd.DataFrame(poly_rows).to_excel(writer, sheet_name="Polynomials", index=False)
+                df_poly = pd.DataFrame(poly_rows)
+                if not df_poly.empty:
+                    df_poly.rename(columns={"Cylinder": self._translate_header("Cylinder")}, inplace=True)
+                df_poly.to_excel(writer, sheet_name="Polynomials", index=False)
+
+                # Лист Correlations
+                df_corr = pd.DataFrame()
                 corr_rows = []
                 for col, res in self.corr_results.items():
-                    corr_rows.append({"Cylinder": col, "n": res["n"], "r": res["r"], "p": res["p"]})
-                pd.DataFrame(corr_rows).to_excel(writer, sheet_name="Correlations", index=False)
+                    corr_rows.append({
+                        "Cylinder": self._translate_header(col),
+                        "n": res["n"],
+                        "r": res["r"],
+                        "p": res["p"],
+                    })
+                df_corr = pd.DataFrame(corr_rows)
+                if not df_corr.empty:
+                    header_map_corr = {
+                        "Cylinder": self._translate_header("Cylinder"),
+                        "n": self._translate_header("n"),
+                        "r": self._translate_header("r"),
+                        "p": self._translate_header("p-value"),
+                    }
+                    df_corr.rename(columns=header_map_corr, inplace=True)
+                df_corr.to_excel(writer, sheet_name="Correlations", index=False)
+
+                # Лист PartialCorr
+                df_pcorr = pd.DataFrame()
                 pcorr_rows = []
                 for col, res in self.partial_corr.items():
-                    pcorr_rows.append({"Cylinder": col, "n": res["n"], "r": res["r"], "p": res["p"]})
-                pd.DataFrame(pcorr_rows).to_excel(writer, sheet_name="PartialCorr", index=False)
+                    pcorr_rows.append({
+                        "Cylinder": self._translate_header(col),
+                        "n": res["n"],
+                        "r": res["r"],
+                        "p": res["p"],
+                    })
+                df_pcorr = pd.DataFrame(pcorr_rows)
+                if not df_pcorr.empty:
+                    header_map_pcorr = {
+                        "Cylinder": self._translate_header("Cylinder"),
+                        "n": self._translate_header("n"),
+                        "r": self._translate_header("r (partial)"),
+                        "p": self._translate_header("p-value"),
+                    }
+                    df_pcorr.rename(columns=header_map_pcorr, inplace=True)
+                df_pcorr.to_excel(writer, sheet_name="PartialCorr", index=False)
 
             self._save_plots()
             if log_callback:
@@ -362,7 +412,6 @@ class EngineAnalyzer:
             if self.translate_func is not None:
                 return self.translate_func(text, self.lang)
             return text
-
         labels = {
             "normal": "Нормальные",
             "outlier": "Выбросы",
@@ -375,14 +424,12 @@ class EngineAnalyzer:
             "ylabel": "Симплекс",
         }
         translated = {k: translate(v) for k, v in labels.items()}
-
         for param in self.params:
             if param not in self.avg_df.columns:
                 continue
             x = self.avg_df["R/H"].values
             y = self.avg_df[param].values
             mask = self.filter_masks.get(param, np.ones(len(x), dtype=bool))
-
             fig, ax = plt.subplots(figsize=(10, 6))
             ax.scatter(
                 x[mask],
@@ -424,7 +471,6 @@ class EngineAnalyzer:
             plt.tight_layout()
             plt.savefig(os.path.join(self.plot_dir, f"filter_{param}.png"), dpi=150)
             plt.close()
-
         fig, ax = plt.subplots(figsize=(12, 7))
         columns = [f"cyl{i}" for i in range(1, self.cylinders + 1)] + ["AVG"]
         colors = plt.cm.tab10(np.linspace(0, 1, len(columns)))
