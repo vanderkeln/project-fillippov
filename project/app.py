@@ -4,7 +4,7 @@ import os
 import tempfile
 import zipfile
 import io
-from engine_analyzer import EngineAnalyzer
+from engine_analyzer import EngineAnalyzer, get_sheet_names
 from deep_translator import GoogleTranslator
 
 st.set_page_config(page_title="Engine Diagnostic", layout="wide")
@@ -53,7 +53,8 @@ RUSSIAN_TEXTS = {
     'data': '📂 Данные',
     'upload': 'Загрузите Excel-файл',
     'or_enter_name': 'Или введите имя файла (если он лежит в папке проекта):',
-    'sheet': 'Имя листа',
+    'sheet': 'Имя листа (если не указано, будет взят первый лист)',
+    'sheet_hint': 'Доступные листы в файле:',
     'simplex': '🧮 Симплекс',
     'num': 'Числитель',
     'den': 'Знаменатель',
@@ -82,7 +83,8 @@ RUSSIAN_TEXTS = {
     'no_plots': 'Графики не найдены.',
     'file_loaded': 'Файл загружен:',
     'results_saved': 'Результаты сохранены в файл results.xlsx и папку plots',
-    'file_not_found': 'Файл не найден. Проверьте имя или загрузите файл через загрузчик.'
+    'file_not_found': 'Файл не найден. Проверьте имя или загрузите файл через загрузчик.',
+    'using_sheet': 'Используется лист:'
 }
 
 def _(text):
@@ -95,7 +97,18 @@ with st.sidebar:
     st.header(_(RUSSIAN_TEXTS['data']))
     uploaded_file = st.file_uploader(_(RUSSIAN_TEXTS['upload']), type=["xlsx", "xls"])
     file_name_input = st.text_input(_(RUSSIAN_TEXTS['or_enter_name']), "")
-    sheet_name = st.text_input(_(RUSSIAN_TEXTS['sheet']), "DG1")
+    sheet_name = st.text_input(_(RUSSIAN_TEXTS['sheet']), "")
+
+    # Если файл загружен, покажем список листов
+    if uploaded_file is not None:
+        # Сохраняем во временный файл для чтения листов
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
+            tmp.write(uploaded_file.getbuffer())
+            tmp_path = tmp.name
+        sheet_list = get_sheet_names(tmp_path)
+        os.unlink(tmp_path)
+        if sheet_list:
+            st.info(f"{_(RUSSIAN_TEXTS['sheet_hint'])} {', '.join(sheet_list)}")
 
     st.header(_(RUSSIAN_TEXTS['simplex']))
     numerator = st.text_input(_(RUSSIAN_TEXTS['num']), "Pz")
@@ -123,12 +136,10 @@ with st.sidebar:
 # Определяем источник файла
 file_path = None
 if uploaded_file is not None:
-    # Сохраняем загруженный файл во временный
     with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
         tmp.write(uploaded_file.getbuffer())
         file_path = tmp.name
 elif file_name_input.strip() != "":
-    # Пытаемся открыть файл по имени из текущей папки
     if os.path.exists(file_name_input.strip()):
         file_path = file_name_input.strip()
     else:
@@ -147,18 +158,19 @@ if file_path and run_btn:
     with st.spinner(_(RUSSIAN_TEXTS['running'])):
         analyzer = EngineAnalyzer(
             file_path=file_path,
-            sheet_name=sheet_name,
+            sheet_name=sheet_name if sheet_name.strip() else None,
             numerator=numerator,
             denominator=denominator,
             poly_deg=poly_deg,
             k_iqr=k_iqr,
             k_params=k_params,
-            lang=st.session_state.lang  # передаём язык для графиков
+            lang=st.session_state.lang
         )
         success = analyzer.run(log_callback=log_callback)
 
     if success:
         st.success(_(RUSSIAN_TEXTS['success']))
+        st.info(f"{_(RUSSIAN_TEXTS['using_sheet'])} {analyzer.used_sheet_name}")
         st.info(_(RUSSIAN_TEXTS['results_saved']))
 
         tab1, tab2, tab3, tab4 = st.tabs([
@@ -199,7 +211,6 @@ if file_path and run_btn:
                 if images:
                     for img in images:
                         st.image(os.path.join("plots", img), caption=img, use_column_width=True)
-                    # Кнопка скачивания всех графиков как ZIP
                     zip_buffer = io.BytesIO()
                     with zipfile.ZipFile(zip_buffer, "w") as zip_file:
                         for img in images:
@@ -216,7 +227,6 @@ if file_path and run_btn:
             else:
                 st.info(_(RUSSIAN_TEXTS['no_plots']))
 
-        # Кнопка скачивания Excel-результатов
         with open("results.xlsx", "rb") as f:
             st.download_button(
                 label=_(RUSSIAN_TEXTS['download_results']),
