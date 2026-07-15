@@ -70,7 +70,7 @@ def polynomial_fit(x, y, deg):
 
 def filter_outliers(x, y, deg, k):
     if len(x) < 3:
-        return np.ones(len(x), dtype=bool), None, None, None, None
+        return np.ones(len(x), dtype=bool), None, None, None, None, None, None
     func, _ = polynomial_fit(x, y, deg)
     y_fit = func(x)
     residuals = y - y_fit
@@ -80,7 +80,7 @@ def filter_outliers(x, y, deg, k):
     lower_bound = q1 - k * iqr
     upper_bound = q3 + k * iqr
     mask = (residuals >= lower_bound) & (residuals <= upper_bound)
-    return mask, func, lower_bound, upper_bound, residuals
+    return mask, func, q1, q3, iqr, lower_bound, upper_bound
 
 def evaluate_simplex(expr, values):
     try:
@@ -109,6 +109,7 @@ class EngineAnalyzer:
         self.blocks = []
         self.avg_df = None
         self.filter_masks = {}
+        self.filter_params = {}
         self.clean_indices = None
         self.simplex_df = None
         self.poly_results = {}
@@ -146,6 +147,7 @@ class EngineAnalyzer:
 
             # Фильтрация
             self.filter_masks = {}
+            self.filter_params = {}
             all_good = np.ones(len(self.avg_df), dtype=bool)
             for param in self.params:
                 x = self.avg_df['R/H'].values
@@ -155,10 +157,21 @@ class EngineAnalyzer:
                 y_valid = y[valid]
                 if len(x_valid) < 3:
                     mask = np.ones(len(y), dtype=bool)
+                    self.filter_params[param] = {'func': None, 'q1': None, 'q3': None, 'iqr': None}
                 else:
-                    mask_valid, _, _, _, _ = filter_outliers(x_valid, y_valid, self.poly_deg, self.k_iqr)
-                    mask = np.zeros(len(y), dtype=bool)
-                    mask[valid] = mask_valid
+                    mask, func, q1, q3, iqr, _, _ = filter_outliers(x_valid, y_valid, self.poly_deg, self.k_iqr)
+                    self.filter_params[param] = {
+                        'func': func,
+                        'q1': q1,
+                        'q3': q3,
+                        'iqr': iqr,
+                        'k': self.k_iqr,
+                        'x': x_valid,
+                        'y': y_valid
+                    }
+                    full_mask = np.zeros(len(y), dtype=bool)
+                    full_mask[valid] = mask
+                    mask = full_mask
                 self.filter_masks[param] = mask
                 self.avg_df[f'{param}_flag'] = (~mask).astype(int)
                 all_good &= mask
@@ -316,20 +329,18 @@ class EngineAnalyzer:
             ax.scatter(x[mask], y[mask], color='blue', s=60, alpha=0.7, label=f'Нормальные (n={np.sum(mask)})')
             # Выбросы – красные
             ax.scatter(x[~mask], y[~mask], color='red', s=80, alpha=0.8, label=f'Выбросы (n={np.sum(~mask)})')
-            if np.any(mask) and len(x[mask]) >= self.poly_deg+1:
-                x_valid = x[mask]
-                y_valid = y[mask]
-                func, _ = polynomial_fit(x_valid, y_valid, self.poly_deg)
-                x_sorted = np.sort(x_valid)
+            # Если есть параметры фильтрации, рисуем границы
+            params = self.filter_params.get(param)
+            if params is not None and params['func'] is not None:
+                func = params['func']
+                q1 = params['q1']
+                q3 = params['q3']
+                iqr = params['iqr']
+                k = params['k']
+                x_sorted = np.sort(x)
                 y_fit = func(x_sorted)
-                # Остатки только по нормальным точкам
-                residuals = y_valid - func(x_valid)
-                q1 = np.percentile(residuals, 25)
-                q3 = np.percentile(residuals, 75)
-                iqr = q3 - q1
-                # Асимметричные границы, соответствующие фильтрации
-                lower = y_fit + (q1 - self.k_iqr * iqr)
-                upper = y_fit + (q3 + self.k_iqr * iqr)
+                lower = y_fit + (q1 - k * iqr)
+                upper = y_fit + (q3 + k * iqr)
                 ax.plot(x_sorted, y_fit, 'gray', linewidth=2, label='Аппроксимация')
                 ax.plot(x_sorted, lower, 'r--', linewidth=1.5, label='Нижняя граница')
                 ax.plot(x_sorted, upper, 'r--', linewidth=1.5, label='Верхняя граница')
@@ -342,7 +353,7 @@ class EngineAnalyzer:
             plt.savefig(os.path.join(self.plot_dir, f'filter_{param}.png'), dpi=150)
             plt.close()
 
-        # График трендов симплекса (чистые точки)
+        # График трендов симплекса – только линии аппроксимации
         fig, ax = plt.subplots(figsize=(12, 7))
         columns = [f'cyl{i}' for i in range(1, self.cylinders+1)] + ['AVG']
         colors = plt.cm.tab10(np.linspace(0, 1, len(columns)))
@@ -354,10 +365,9 @@ class EngineAnalyzer:
                 n_points = np.sum(valid)
                 if n_points == 0:
                     continue
-                ax.scatter(x[valid], y[valid], color=colors[idx], s=50, alpha=0.6, label=f'{col} (n={n_points})')
                 x_plot = np.linspace(min(x[valid]), max(x[valid]), 100)
                 y_plot = self.poly_functions[col](x_plot)
-                ax.plot(x_plot, y_plot, color=colors[idx], linewidth=2.5)
+                ax.plot(x_plot, y_plot, color=colors[idx], linewidth=2.5, label=f'{col} (n={n_points})')
         ax.set_xlabel('R/H', fontsize=12)
         ax.set_ylabel('Симплекс', fontsize=12)
         ax.set_title(f'Тренды симплекса ({self.numerator}/{self.denominator})', fontsize=14)
