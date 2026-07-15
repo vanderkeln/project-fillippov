@@ -99,9 +99,7 @@ with st.sidebar:
     file_name_input = st.text_input(_(RUSSIAN_TEXTS['or_enter_name']), "")
     sheet_name = st.text_input(_(RUSSIAN_TEXTS['sheet']), "")
 
-    # Если файл загружен, покажем список листов
     if uploaded_file is not None:
-        # Сохраняем во временный файл для чтения листов
         with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
             tmp.write(uploaded_file.getbuffer())
             tmp_path = tmp.name
@@ -133,7 +131,6 @@ with st.sidebar:
     run_btn = st.button(_(RUSSIAN_TEXTS['run']), type="primary", use_container_width=True)
 
 # --- Основная область ---
-# Определяем источник файла
 file_path = None
 if uploaded_file is not None:
     with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
@@ -164,7 +161,8 @@ if file_path and run_btn:
             poly_deg=poly_deg,
             k_iqr=k_iqr,
             k_params=k_params,
-            lang=st.session_state.lang
+            lang=st.session_state.lang,
+            translate_func=translate_text
         )
         success = analyzer.run(log_callback=log_callback)
 
@@ -235,7 +233,6 @@ if file_path and run_btn:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
-        # Если файл был временным (загружен через uploader) – удаляем
         if uploaded_file is not None and os.path.exists(file_path):
             os.unlink(file_path)
 
