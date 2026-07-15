@@ -80,7 +80,7 @@ RUSSIAN_TEXTS = {
     'file_loaded': 'Файл загружен:'
 }
 
-# ---------- Перевод всего интерфейса ----------
+# ---------- Функция для перевода интерфейсных текстов ----------
 def _(text):
     return translate_text(text, st.session_state.lang)
 
@@ -124,8 +124,10 @@ if uploaded_file and run_btn:
     log_placeholder = log_container.empty()
     log_messages = []
 
+    # ---------- Лог-функция с ПЕРЕВОДОМ ----------
     def log_callback(msg):
-        log_messages.append(msg)
+        translated = translate_text(msg, st.session_state.lang)  # <-- перевод здесь
+        log_messages.append(translated)
         log_placeholder.text("\n".join(log_messages[-20:]))
 
     with st.spinner(_(RUSSIAN_TEXTS['running'])):
