@@ -11,8 +11,38 @@ warnings.filterwarnings('ignore')
 #  ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 # ============================================================
 
-def read_data(file_path, sheet_name):
-    df = pd.read_excel(file_path, sheet_name=sheet_name, header=0)
+def get_sheet_names(file_path):
+    """Возвращает список имён листов в Excel-файле."""
+    try:
+        xl = pd.ExcelFile(file_path)
+        return xl.sheet_names
+    except Exception:
+        return []
+
+def read_data(file_path, sheet_name=None):
+    """
+    Читает данные из Excel.
+    Если sheet_name не указан или не найден, использует первый лист.
+    Возвращает (DataFrame, использованное_имя_листа).
+    """
+    if sheet_name is None or sheet_name.strip() == "":
+        sheet_names = get_sheet_names(file_path)
+        if sheet_names:
+            sheet_name = sheet_names[0]
+        else:
+            raise ValueError("Не удалось найти ни одного листа в файле.")
+
+    try:
+        df = pd.read_excel(file_path, sheet_name=sheet_name, header=0)
+    except Exception:
+        # Если лист не найден, пробуем первый
+        sheet_names = get_sheet_names(file_path)
+        if sheet_names:
+            sheet_name = sheet_names[0]
+            df = pd.read_excel(file_path, sheet_name=sheet_name, header=0)
+        else:
+            raise ValueError("Не удалось прочитать файл. Проверьте, что файл содержит данные.")
+
     df = df.dropna(how='all').dropna(axis=1, how='all')
     df.columns = df.columns.str.strip()
     new_cols = []
@@ -26,7 +56,7 @@ def read_data(file_path, sheet_name):
         else:
             new_cols.append(col)
     df.columns = new_cols
-    return df
+    return df, sheet_name
 
 def detect_cylinders(df):
     return len([col for col in df.columns if col.startswith('cyl')])
@@ -104,7 +134,7 @@ class EngineAnalyzer:
         self.poly_deg = poly_deg
         self.k_iqr = k_iqr
         self.k_params = k_params if k_params else {}
-        self.lang = lang  # язык для подписей на графиках
+        self.lang = lang
         self.df = None
         self.params = []
         self.cylinders = 0
@@ -120,6 +150,7 @@ class EngineAnalyzer:
         self.partial_corr = {}
         self.output_excel = "results.xlsx"
         self.plot_dir = "plots"
+        self.used_sheet_name = None
 
     def _get_k_for_param(self, param):
         if self.k_iqr is not None:
@@ -130,7 +161,9 @@ class EngineAnalyzer:
         try:
             if log_callback:
                 log_callback("Загрузка данных...")
-            self.df = read_data(self.file_path, self.sheet_name)
+            self.df, self.used_sheet_name = read_data(self.file_path, self.sheet_name)
+            if log_callback:
+                log_callback(f"Используется лист: {self.used_sheet_name}")
             self.cylinders = detect_cylinders(self.df)
             self.params = detect_parameters(self.df)
             if log_callback:
