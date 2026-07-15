@@ -44,7 +44,7 @@ def translate_text(text, target_lang):
         return text
 
 with st.sidebar:
-    st.markdown("🌐 Язык")
+    st.markdown(f"🌐 {translate_text('Язык', st.session_state.lang)}")
     lang = st.selectbox(
         "",
         options=list(LANGUAGES.keys()),
