@@ -304,40 +304,46 @@ class EngineAnalyzer:
             return False
 
     def _save_plots(self):
+        # Графики фильтрации для каждого параметра
         for param in self.params:
             if param not in self.avg_df.columns:
                 continue
             x = self.avg_df['R/H'].values
             y = self.avg_df[param].values
             mask = self.filter_masks.get(param, np.ones(len(x), dtype=bool))
-            fig, ax = plt.subplots(figsize=(8,5))
-            ax.scatter(x[mask], y[mask], color='blue', label='Нормальные')
-            ax.scatter(x[~mask], y[~mask], color='red', label='Выбросы')
+            fig, ax = plt.subplots(figsize=(10, 6))
+            # Нормальные точки – синие
+            ax.scatter(x[mask], y[mask], color='blue', s=60, alpha=0.7, label=f'Нормальные (n={np.sum(mask)})')
+            # Выбросы – красные
+            ax.scatter(x[~mask], y[~mask], color='red', s=80, alpha=0.8, label=f'Выбросы (n={np.sum(~mask)})')
             if np.any(mask) and len(x[mask]) >= self.poly_deg+1:
                 x_valid = x[mask]
                 y_valid = y[mask]
                 func, _ = polynomial_fit(x_valid, y_valid, self.poly_deg)
                 x_sorted = np.sort(x_valid)
                 y_fit = func(x_sorted)
+                # Остатки только по нормальным точкам
                 residuals = y_valid - func(x_valid)
                 q1 = np.percentile(residuals, 25)
                 q3 = np.percentile(residuals, 75)
                 iqr = q3 - q1
-                lower = y_fit - self.k_iqr * iqr
-                upper = y_fit + self.k_iqr * iqr
-                ax.plot(x_sorted, y_fit, 'gray', label='Аппроксимация')
-                ax.plot(x_sorted, lower, 'r--', label='Нижняя граница')
-                ax.plot(x_sorted, upper, 'r--', label='Верхняя граница')
-            ax.set_xlabel('R/H')
-            ax.set_ylabel(param)
-            ax.set_title(f'Фильтрация {param} (k={self.k_iqr})')
-            ax.legend()
+                # Асимметричные границы, соответствующие фильтрации
+                lower = y_fit + (q1 - self.k_iqr * iqr)
+                upper = y_fit + (q3 + self.k_iqr * iqr)
+                ax.plot(x_sorted, y_fit, 'gray', linewidth=2, label='Аппроксимация')
+                ax.plot(x_sorted, lower, 'r--', linewidth=1.5, label='Нижняя граница')
+                ax.plot(x_sorted, upper, 'r--', linewidth=1.5, label='Верхняя граница')
+            ax.set_xlabel('R/H', fontsize=12)
+            ax.set_ylabel(param, fontsize=12)
+            ax.set_title(f'Фильтрация {param} (k={self.k_iqr})', fontsize=14)
+            ax.grid(True, linestyle='--', alpha=0.6)
+            ax.legend(fontsize=10)
             plt.tight_layout()
             plt.savefig(os.path.join(self.plot_dir, f'filter_{param}.png'), dpi=150)
             plt.close()
 
-        # Тренды симплекса
-        fig, ax = plt.subplots(figsize=(10,6))
+        # График трендов симплекса (чистые точки)
+        fig, ax = plt.subplots(figsize=(12, 7))
         columns = [f'cyl{i}' for i in range(1, self.cylinders+1)] + ['AVG']
         colors = plt.cm.tab10(np.linspace(0, 1, len(columns)))
         for idx, col in enumerate(columns):
@@ -345,15 +351,18 @@ class EngineAnalyzer:
                 x = self.simplex_df['R/H'].values
                 y = self.simplex_df[col].values
                 valid = ~np.isnan(y)
-                if np.any(valid):
-                    x_plot = np.linspace(min(x[valid]), max(x[valid]), 100)
-                    y_plot = self.poly_functions[col](x_plot)
-                    ax.plot(x_plot, y_plot, color=colors[idx], label=col)
-                    ax.scatter(x[valid], y[valid], color=colors[idx], s=20, alpha=0.5)
-        ax.set_xlabel('R/H')
-        ax.set_ylabel('Симплекс')
-        ax.set_title(f'Тренды симплекса ({self.numerator}/{self.denominator})')
-        ax.legend()
+                n_points = np.sum(valid)
+                if n_points == 0:
+                    continue
+                ax.scatter(x[valid], y[valid], color=colors[idx], s=50, alpha=0.6, label=f'{col} (n={n_points})')
+                x_plot = np.linspace(min(x[valid]), max(x[valid]), 100)
+                y_plot = self.poly_functions[col](x_plot)
+                ax.plot(x_plot, y_plot, color=colors[idx], linewidth=2.5)
+        ax.set_xlabel('R/H', fontsize=12)
+        ax.set_ylabel('Симплекс', fontsize=12)
+        ax.set_title(f'Тренды симплекса ({self.numerator}/{self.denominator})', fontsize=14)
+        ax.grid(True, linestyle='--', alpha=0.6)
+        ax.legend(fontsize=10)
         plt.tight_layout()
         plt.savefig(os.path.join(self.plot_dir, 'simplex_trends.png'), dpi=150)
         plt.close()
