@@ -1,57 +1,110 @@
 import streamlit as st
-import streamlit.components.v1 as components
 import pandas as pd
 import os
 import tempfile
 from engine_analyzer import EngineAnalyzer
+from deep_translator import GoogleTranslator
 
 st.set_page_config(page_title="Engine Diagnostic", layout="wide")
 
-# ---------- Google Translate виджет (упрощённый) ----------
-# Размещаем в боковой панели
+# ---------- Настройка языка ----------
+if 'lang' not in st.session_state:
+    st.session_state.lang = 'ru'
+
+# Список поддерживаемых языков
+LANGUAGES = {
+    'ru': 'Русский',
+    'en': 'English',
+    'de': 'Deutsch',
+    'fr': 'Français',
+    'es': 'Español',
+    'zh-CN': '中文',
+    'ja': '日本語',
+    'ko': '한국어'
+}
+
+# ---------- Переключатель в боковой панели ----------
 with st.sidebar:
-    st.markdown("### 🌐 Translate")
-    translate_html = """
-    <div id="google_translate_element"></div>
-    <script>
-    function googleTranslateElementInit() {
-      new google.translate.TranslateElement({
-        pageLanguage: 'ru',
-        includedLanguages: 'ru,en,de,fr,es,zh-CN,ja,ko,it,pt',
-        layout: google.translate.TranslateElement.InlineLayout.SIMPLE
-      }, 'google_translate_element');
-    }
-    </script>
-    <script src="//translate.google.com/translate_a/element.js?cb=googleTranslateElementInit"></script>
-    <style>
-      .goog-te-banner-frame.skiptranslate { display: none !important; }
-      body { top: 0px !important; }
-      .goog-te-gadget { font-family: inherit !important; }
-      .goog-te-combo { padding: 5px; border-radius: 4px; border: 1px solid #ccc; }
-    </style>
-    """
-    components.html(translate_html, height=120)
+    st.markdown("### 🌐 Язык / Language")
+    lang = st.selectbox(
+        "",
+        options=list(LANGUAGES.keys()),
+        format_func=lambda x: LANGUAGES[x],
+        index=0 if st.session_state.lang == 'ru' else list(LANGUAGES.keys()).index(st.session_state.lang)
+    )
+    if lang != st.session_state.lang:
+        st.session_state.lang = lang
+        st.rerun()
 
-st.title("🚀 Диагностический анализ двигателя")
+# ---------- Функция перевода (с кешированием) ----------
+@st.cache_data(ttl=3600)
+def translate_text(text, target_lang):
+    if target_lang == 'ru':
+        return text
+    try:
+        return GoogleTranslator(source='ru', target=target_lang).translate(text)
+    except Exception:
+        return text  # в случае ошибки возвращаем оригинал
 
-# --- Остальной интерфейс ---
+# ---------- Русские тексты ----------
+RUSSIAN_TEXTS = {
+    'title': '🚀 Диагностический анализ двигателя',
+    'data': '📂 Данные',
+    'upload': 'Загрузите Excel-файл',
+    'sheet': 'Имя листа',
+    'simplex': '🧮 Симплекс',
+    'num': 'Числитель',
+    'den': 'Знаменатель',
+    'filter': '📊 Фильтрация',
+    'poly': 'Степень полинома',
+    'k_mode': 'Режим коэффициента IQR',
+    'k_common': 'Общий',
+    'k_individual': 'Индивидуальный',
+    'k_label': 'Общий коэффициент k',
+    'k_hint': 'Введите коэффициенты для каждого параметра:',
+    'run': '🔍 Запустить анализ',
+    'running': '⏳ Выполняется анализ...',
+    'success': '✅ Анализ завершён успешно!',
+    'error': '❌ Ошибка при выполнении анализа. Проверьте логи выше.',
+    'wait_file': '👈 Загрузите Excel-файл и настройте параметры.',
+    'wait_run': '👆 Настройте параметры и нажмите кнопку запуска.',
+    'tab1': '📊 Симплекс',
+    'tab2': '📈 Коэффициенты',
+    'tab3': '📉 Корреляции',
+    'tab4': '🖼 Графики',
+    'corr_pearson': 'Корреляции Пирсона',
+    'corr_partial': 'Частные корреляции (контроль по Index)',
+    'download': '📥 Скачать результаты (Excel)',
+    'no_results': 'Файл результатов не найден.',
+    'no_plots': 'Графики не найдены.',
+    'file_loaded': 'Файл загружен:'
+}
+
+# ---------- Перевод всего интерфейса ----------
+def _(text):
+    return translate_text(text, st.session_state.lang)
+
+st.title(_(RUSSIAN_TEXTS['title']))
+
+# --- Боковая панель ---
 with st.sidebar:
-    st.header("📂 Данные")
-    uploaded_file = st.file_uploader("Загрузите Excel-файл", type=["xlsx", "xls"])
-    sheet_name = st.text_input("Имя листа", "DG1")
+    st.header(_(RUSSIAN_TEXTS['data']))
+    uploaded_file = st.file_uploader(_(RUSSIAN_TEXTS['upload']), type=["xlsx", "xls"])
+    sheet_name = st.text_input(_(RUSSIAN_TEXTS['sheet']), "DG1")
 
-    st.header("🧮 Симплекс")
-    numerator = st.text_input("Числитель", "Pz")
-    denominator = st.text_input("Знаменатель", "Index")
+    st.header(_(RUSSIAN_TEXTS['simplex']))
+    numerator = st.text_input(_(RUSSIAN_TEXTS['num']), "Pz")
+    denominator = st.text_input(_(RUSSIAN_TEXTS['den']), "Index")
 
-    st.header("📊 Фильтрация")
-    poly_deg = st.selectbox("Степень полинома", [1, 2], index=1)
-    k_mode = st.radio("Режим коэффициента IQR", ["Общий", "Индивидуальный"], index=0)
-    if k_mode == "Общий":
-        k_iqr = st.number_input("Общий коэффициент k", value=0.9, step=0.05, format="%.2f")
+    st.header(_(RUSSIAN_TEXTS['filter']))
+    poly_deg = st.selectbox(_(RUSSIAN_TEXTS['poly']), [1, 2], index=1)
+    k_mode = st.radio(_(RUSSIAN_TEXTS['k_mode']), [_(RUSSIAN_TEXTS['k_common']), _(RUSSIAN_TEXTS['k_individual'])], index=0)
+    
+    if k_mode == _(RUSSIAN_TEXTS['k_common']):
+        k_iqr = st.number_input(_(RUSSIAN_TEXTS['k_label']), value=0.9, step=0.05, format="%.2f")
         k_params = None
     else:
-        st.write("Введите коэффициенты для каждого параметра:")
+        st.write(_(RUSSIAN_TEXTS['k_hint']))
         k_params = {}
         param_names = ["Pz", "Pc", "Pi", "Ni", "Index"]
         for p in param_names:
@@ -59,7 +112,7 @@ with st.sidebar:
             k_params[p.lower()] = val
         k_iqr = None
 
-    run_btn = st.button("🔍 Запустить анализ", type="primary", use_container_width=True)
+    run_btn = st.button(_(RUSSIAN_TEXTS['run']), type="primary", use_container_width=True)
 
 # --- Основная область ---
 if uploaded_file and run_btn:
@@ -75,7 +128,7 @@ if uploaded_file and run_btn:
         log_messages.append(msg)
         log_placeholder.text("\n".join(log_messages[-20:]))
 
-    with st.spinner("⏳ Выполняется анализ..."):
+    with st.spinner(_(RUSSIAN_TEXTS['running'])):
         analyzer = EngineAnalyzer(
             file_path=tmp_path,
             sheet_name=sheet_name,
@@ -88,11 +141,13 @@ if uploaded_file and run_btn:
         success = analyzer.run(log_callback=log_callback)
 
     if success:
-        st.success("✅ Анализ завершён успешно!")
+        st.success(_(RUSSIAN_TEXTS['success']))
 
         tab1, tab2, tab3, tab4 = st.tabs([
-            "📊 Симплекс", "📈 Коэффициенты",
-            "📉 Корреляции", "🖼 Графики"
+            _(RUSSIAN_TEXTS['tab1']),
+            _(RUSSIAN_TEXTS['tab2']),
+            _(RUSSIAN_TEXTS['tab3']),
+            _(RUSSIAN_TEXTS['tab4'])
         ])
 
         with tab1:
@@ -100,25 +155,25 @@ if uploaded_file and run_btn:
                 df = pd.read_excel("results.xlsx", sheet_name="Simplex")
                 st.dataframe(df, use_container_width=True)
             else:
-                st.warning("Файл результатов не найден.")
+                st.warning(_(RUSSIAN_TEXTS['no_results']))
 
         with tab2:
             if os.path.exists("results.xlsx"):
                 df = pd.read_excel("results.xlsx", sheet_name="Polynomials")
                 st.dataframe(df, use_container_width=True)
             else:
-                st.warning("Файл результатов не найден.")
+                st.warning(_(RUSSIAN_TEXTS['no_results']))
 
         with tab3:
             if os.path.exists("results.xlsx"):
                 df = pd.read_excel("results.xlsx", sheet_name="Correlations")
-                st.subheader("Корреляции Пирсона")
+                st.subheader(_(RUSSIAN_TEXTS['corr_pearson']))
                 st.dataframe(df, use_container_width=True)
                 df2 = pd.read_excel("results.xlsx", sheet_name="PartialCorr")
-                st.subheader("Частные корреляции (контроль по Index)")
+                st.subheader(_(RUSSIAN_TEXTS['corr_partial']))
                 st.dataframe(df2, use_container_width=True)
             else:
-                st.warning("Файл результатов не найден.")
+                st.warning(_(RUSSIAN_TEXTS['no_results']))
 
         with tab4:
             if os.path.exists("plots"):
@@ -127,13 +182,13 @@ if uploaded_file and run_btn:
                     for img in images:
                         st.image(os.path.join("plots", img), caption=img, use_column_width=True)
                 else:
-                    st.info("Графики не найдены.")
+                    st.info(_(RUSSIAN_TEXTS['no_plots']))
             else:
-                st.info("Графики не найдены.")
+                st.info(_(RUSSIAN_TEXTS['no_plots']))
 
         with open("results.xlsx", "rb") as f:
             st.download_button(
-                label="📥 Скачать результаты (Excel)",
+                label=_(RUSSIAN_TEXTS['download']),
                 data=f,
                 file_name="results.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -142,12 +197,12 @@ if uploaded_file and run_btn:
         os.unlink(tmp_path)
 
     else:
-        st.error("❌ Ошибка при выполнении анализа. Проверьте логи выше.")
+        st.error(_(RUSSIAN_TEXTS['error']))
 
 elif uploaded_file and not run_btn:
-    st.info("👆 Настройте параметры и нажмите кнопку запуска.")
+    st.info(_(RUSSIAN_TEXTS['wait_run']))
 else:
-    st.info("👈 Загрузите Excel-файл и настройте параметры.")
+    st.info(_(RUSSIAN_TEXTS['wait_file']))
 
 if uploaded_file:
-    st.sidebar.success(f"Файл загружен: {uploaded_file.name}")
+    st.sidebar.success(f"{_(RUSSIAN_TEXTS['file_loaded'])} {uploaded_file.name}")
