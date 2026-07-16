@@ -85,19 +85,56 @@ def polynomial_fit(x, y, deg):
     func = lambda x: np.polyval(coeffs, x)
     return func, coeffs
 
-def filter_outliers(x, y, deg, k):
+# ---------- VBA-style percentile (как в макросе) ----------
+def percentile_vba(data, p):
+    """
+    Вычисляет p-квантиль (p от 0 до 1) методом, используемым в VBA:
+    pos = p * (n + 1)
+    idx = int(pos) - 1  # переводим в 0-индексацию
+    frac = pos - int(pos)
+    если idx < 0: берём первое значение
+    если idx >= n-1: берём последнее
+    иначе: data[idx] + frac * (data[idx+1] - data[idx])
+    """
+    n = len(data)
+    if n == 0:
+        return np.nan
+    if p < 0 or p > 1:
+        raise ValueError("p должно быть от 0 до 1")
+    pos = p * (n + 1)
+    idx = int(pos) - 1
+    frac = pos - int(pos)
+    if idx < 0:
+        return data[0]
+    if idx >= n - 1:
+        return data[-1]
+    return data[idx] + frac * (data[idx+1] - data[idx])
+
+def filter_outliers_vba(x, y, deg, k):
+    """
+    Фильтрация по IQR с квартилями как в VBA и симметричными границами.
+    Возвращает маску (True - нормальная), а также все промежуточные значения для отладки.
+    """
     if len(x) < 3:
-        return np.ones(len(x), dtype=bool), None, None, None, None, None, None
-    func, _ = polynomial_fit(x, y, deg)
+        return np.ones(len(x), dtype=bool), None, None, None, None, None, None, None, None
+
+    func, coeffs = polynomial_fit(x, y, deg)
     y_fit = func(x)
     residuals = y - y_fit
-    q1 = np.percentile(residuals, 25)
-    q3 = np.percentile(residuals, 75)
+
+    # Сортируем остатки для квартилей
+    sorted_res = np.sort(residuals)
+
+    q1 = percentile_vba(sorted_res, 0.25)
+    q3 = percentile_vba(sorted_res, 0.75)
     iqr = q3 - q1
+
     lower_bound = q1 - k * iqr
     upper_bound = q3 + k * iqr
+
     mask = (residuals >= lower_bound) & (residuals <= upper_bound)
-    return mask, func, q1, q3, iqr, lower_bound, upper_bound
+
+    return mask, func, q1, q3, iqr, lower_bound, upper_bound, coeffs, residuals
 
 def evaluate_simplex(expr, values):
     try:
@@ -192,6 +229,7 @@ class EngineAnalyzer:
             if log_callback:
                 log_callback("Средние значения вычислены.")
 
+            # ---- Фильтрация по VBA-логике (с квартилями как в макросе) ----
             if self.apply_filter:
                 self.filter_masks = {}
                 self.filter_params = {}
@@ -207,13 +245,19 @@ class EngineAnalyzer:
                         mask = np.ones(len(y), dtype=bool)
                         self.filter_params[param] = {"func": None, "q1": None, "q3": None, "iqr": None, "k": k}
                     else:
-                        mask, func, q1, q3, iqr, _, _ = filter_outliers(x_valid, y_valid, self.poly_deg, k)
+                        mask, func, q1, q3, iqr, lower, upper, coeffs, residuals = filter_outliers_vba(
+                            x_valid, y_valid, self.poly_deg, k
+                        )
                         self.filter_params[param] = {
                             "func": func,
                             "q1": q1,
                             "q3": q3,
                             "iqr": iqr,
                             "k": k,
+                            "lower": lower,
+                            "upper": upper,
+                            "coeffs": coeffs,
+                            "residuals": residuals,
                             "x": x_valid,
                             "y": y_valid,
                         }
@@ -235,6 +279,7 @@ class EngineAnalyzer:
                 if log_callback:
                     log_callback("Фильтрация выключена, используются все блоки.")
 
+            # ---- Корреляции для ВСЕХ данных ----
             self.corr_params_all = {}
             self.corr_scatter_data_all = {}
             if len(self.avg_df) >= 3:
@@ -247,6 +292,7 @@ class EngineAnalyzer:
                         self.corr_params_all[param.upper()] = {"r": r, "p": p, "n": np.sum(valid)}
                         self.corr_scatter_data_all[param.upper()] = {"x": x_rh[valid], "y": y_vals[valid]}
 
+            # ---- Корреляции для ОТФИЛЬТРОВАННЫХ данных ----
             self.corr_params_clean = {}
             self.corr_scatter_data_clean = {}
             if len(self.clean_avg_df) >= 3:
@@ -259,6 +305,7 @@ class EngineAnalyzer:
                         self.corr_params_clean[param.upper()] = {"r": r, "p": p, "n": np.sum(valid)}
                         self.corr_scatter_data_clean[param.upper()] = {"x": x_rh[valid], "y": y_vals[valid]}
 
+            # ---- Симплекс ----
             rows_simplex = []
             for idx, block in enumerate(self.blocks):
                 if not self.clean_indices[idx]:
@@ -297,6 +344,7 @@ class EngineAnalyzer:
             if log_callback:
                 log_callback(f"Симплекс вычислен для {len(self.simplex_df)} блоков.")
 
+            # Добавляем корреляцию симплекса в оба набора
             if not self.simplex_df.empty:
                 x_sim = self.simplex_df["R/H"].values
                 y_sim = self.simplex_df["AVG"].values
@@ -308,6 +356,7 @@ class EngineAnalyzer:
                     self.corr_params_clean["Simplex AVG"] = {"r": r, "p": p, "n": np.sum(valid)}
                     self.corr_scatter_data_clean["Simplex AVG"] = {"x": x_sim[valid], "y": y_sim[valid]}
 
+            # ---- Полиномы ----
             columns = [f"cyl{i}" for i in range(1, self.cylinders + 1)] + ["AVG"]
             for col in columns:
                 x = self.simplex_df["R/H"].values
@@ -325,6 +374,7 @@ class EngineAnalyzer:
             if log_callback:
                 log_callback("Полиномиальная аппроксимация выполнена.")
 
+            # ---- Корреляции симплекса по цилиндрам ----
             for col in columns:
                 x = self.simplex_df["R/H"].values
                 y = self.simplex_df[col].values
@@ -339,6 +389,7 @@ class EngineAnalyzer:
             if log_callback:
                 log_callback("Корреляции симплекса вычислены.")
 
+            # ---- Частная корреляция ----
             idx_col = None
             for col in self.avg_df.columns:
                 if col.lower() == "index":
@@ -369,6 +420,7 @@ class EngineAnalyzer:
                     log_callback("Предупреждение: столбец Index не найден, частная корреляция пропущена.")
                 self.partial_corr = {}
 
+            # ---- Сохранение Excel ----
             os.makedirs(self.plot_dir, exist_ok=True)
             with pd.ExcelWriter(self.output_excel, engine="openpyxl") as writer:
                 df_avg = self.avg_df.copy()
@@ -502,7 +554,7 @@ class EngineAnalyzer:
                 k = params["k"]
                 x_sorted = np.sort(x)
                 y_fit = func(x_sorted)
-                lower = y_fit + (q1 - k * iqr)
+                lower = y_fit + (q1 - k * iqr)   # границы как в VBA: lower = fitted + q1 - k*IQR, upper = fitted + q3 + k*IQR
                 upper = y_fit + (q3 + k * iqr)
                 ax.plot(x_sorted, y_fit, "gray", linewidth=2, label=translated["fit"])
                 ax.plot(x_sorted, lower, "r--", linewidth=1.5, label=translated["lower"])
