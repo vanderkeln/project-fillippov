@@ -97,10 +97,11 @@ TEXTS = {
     "file_not_found": "Файл не найден. Проверьте имя или загрузите файл через загрузчик.",
     "using_sheet": "Используется лист:",
     "select_param": "Выберите параметр для корреляции",
+    "data_source": "Использовать данные",
+    "data_all": "все",
+    "data_clean": "после фильтрации",
     "no_corr_data": "Нет данных для корреляционного анализа.",
-    "param_not_found": "Данные для параметра '{param}' не найдены.",
     "not_enough_points": "Недостаточно точек для построения графика.",
-    "scatter_data_unavailable": "Данные для графика недоступны.",
 }
 
 def _(text):
@@ -128,6 +129,7 @@ with st.sidebar:
     denominator = st.text_input(_(TEXTS["den"]), "Index")
 
     st.header(_(TEXTS["filter"]))
+    apply_filter = st.checkbox("Применить фильтрацию выбросов", value=True)
     poly_deg = st.selectbox(_(TEXTS["poly"]), [1, 2], index=1)
     k_mode = st.radio(_(TEXTS["k_mode"]), [_(TEXTS["k_common"]), _(TEXTS["k_individual"])], index=0)
 
@@ -177,6 +179,7 @@ if file_path and run_btn:
             k_params=k_params,
             lang=st.session_state.lang,
             translate_func=translate_text,
+            apply_filter=apply_filter,
         )
         success = analyzer.run(log_callback=log_callback)
 
@@ -209,36 +212,40 @@ if file_path and run_btn:
                 st.warning(_(TEXTS["no_results"]))
 
         with tab3:
-            # Отображение корреляций
-            st.subheader(_(TEXTS["corr_pearson"]))
+            if not hasattr(analyzer, 'corr_params_all') or not analyzer.corr_params_all:
+                st.info(_(TEXTS["no_corr_data"]))
+            else:
+                st.subheader(_(TEXTS["corr_pearson"]))
 
-            # Используем данные из analyzer.corr_params (если есть)
-            if hasattr(analyzer, 'corr_params') and analyzer.corr_params:
-                # Создаём таблицу для отображения
-                corr_data = []
-                for param, res in analyzer.corr_params.items():
-                    corr_data.append({
-                        "Параметр": param,
-                        "n": res["n"],
-                        "r": res["r"],
-                        "p": res["p"],
-                    })
-                df_corr_display = pd.DataFrame(corr_data)
-                param_options = list(analyzer.corr_params.keys())
+                data_source = st.radio(_(TEXTS["data_source"]), [_(TEXTS["data_clean"]), _(TEXTS["data_all"])], index=0)
+                if data_source == _(TEXTS["data_clean"]):
+                    corr_dict = analyzer.corr_params_clean
+                    scatter_dict = analyzer.corr_scatter_data_clean
+                else:
+                    corr_dict = analyzer.corr_params_all
+                    scatter_dict = analyzer.corr_scatter_data_all
 
-                if param_options:
+                if not corr_dict:
+                    st.info(_(TEXTS["no_corr_data"]))
+                else:
+                    param_options = list(corr_dict.keys())
                     selected_param = st.selectbox(_(TEXTS["select_param"]), param_options, index=0)
 
-                    # Отображаем строку для выбранного параметра
-                    row = df_corr_display[df_corr_display["Параметр"] == selected_param]
-                    if not row.empty:
-                        st.dataframe(row, use_container_width=True)
+                    if selected_param in corr_dict:
+                        res = corr_dict[selected_param]
+                        df_show = pd.DataFrame({
+                            "Параметр": [selected_param],
+                            "n": [res["n"]],
+                            "r": [res["r"]],
+                            "p-value": [res["p"]]
+                        })
+                        st.dataframe(df_show, use_container_width=True)
                     else:
-                        st.info(_(TEXTS["param_not_found"]).format(param=selected_param))
+                        st.info("Данные для параметра не найдены.")
 
-                    # График scatter
-                    if hasattr(analyzer, 'corr_scatter_data') and selected_param in analyzer.corr_scatter_data:
-                        data = analyzer.corr_scatter_data[selected_param]
+                    # Scatter plot
+                    if selected_param in scatter_dict:
+                        data = scatter_dict[selected_param]
                         x = data['x']
                         y = data['y']
                         if len(x) > 1:
@@ -254,31 +261,10 @@ if file_path and run_btn:
                             st.pyplot(fig)
                         else:
                             st.info(_(TEXTS["not_enough_points"]))
-                    else:
-                        st.info(_(TEXTS["scatter_data_unavailable"]))
-                else:
-                    st.info(_(TEXTS["no_corr_data"]))
-            else:
-                # Если analyzer.corr_params нет, пробуем загрузить из Excel
-                if os.path.exists("results.xlsx"):
-                    df_corr = pd.read_excel("results.xlsx", sheet_name="Correlations")
-                    param_options = [col for col in df_corr.columns if col not in ["Cylinder", "n", "r", "p"]]
-                    if param_options:
-                        selected_param = st.selectbox(_(TEXTS["select_param"]), param_options, index=0)
-                        if selected_param in df_corr.columns:
-                            df_filtered = df_corr[["Cylinder", selected_param, "n", "r", "p"]]
-                            st.dataframe(df_filtered, use_container_width=True)
-                        else:
-                            st.info(_(TEXTS["param_not_found"]).format(param=selected_param))
-                    else:
-                        st.info(_(TEXTS["no_corr_data"]))
-                else:
-                    st.warning(_(TEXTS["no_results"]))
 
-            # Частные корреляции
-            if os.path.exists("results.xlsx"):
-                df_pcorr = pd.read_excel("results.xlsx", sheet_name="PartialCorr")
-                if not df_pcorr.empty:
+                # Частные корреляции
+                if os.path.exists("results.xlsx"):
+                    df_pcorr = pd.read_excel("results.xlsx", sheet_name="PartialCorr")
                     st.subheader(_(TEXTS["corr_partial"]))
                     st.dataframe(df_pcorr, use_container_width=True)
 
