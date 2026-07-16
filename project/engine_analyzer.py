@@ -80,22 +80,41 @@ def average_block(block, params, cyl_cols):
             avg_dict[p] = 0.0
     return date_val, rh_val, avg_dict
 
-def polynomial_fit(x, y, deg):
-    coeffs = np.polyfit(x, y, deg)
-    func = lambda x: np.polyval(coeffs, x)
-    return func, coeffs
+def polyfit_vba(x, y, deg):
+    n = len(x)
+    if deg == 1:
+        m = 2
+    elif deg == 2:
+        m = 3
+    else:
+        raise ValueError("deg должен быть 1 или 2")
 
-# ---------- VBA-style percentile (как в макросе) ----------
+    x_pow = np.zeros(2*deg + 1)
+    for i in range(2*deg + 1):
+        x_pow[i] = np.sum(x**i)
+
+    A = np.zeros((m, m))
+    b = np.zeros(m)
+    for r in range(m):
+        for c in range(m):
+            A[r, c] = x_pow[r + c]
+        b[r] = np.sum((x**r) * y)
+
+    aug = np.hstack([A, b.reshape(-1, 1)])
+    for col in range(m):
+        pivot = np.argmax(np.abs(aug[col:, col])) + col
+        if pivot != col:
+            aug[[col, pivot]] = aug[[pivot, col]]
+        if aug[col, col] != 0:
+            aug[col] = aug[col] / aug[col, col]
+        for row in range(m):
+            if row != col and aug[row, col] != 0:
+                factor = aug[row, col]
+                aug[row] = aug[row] - factor * aug[col]
+    coeffs = aug[:, -1]
+    return coeffs
+
 def percentile_vba(data, p):
-    """
-    Вычисляет p-квантиль (p от 0 до 1) методом, используемым в VBA:
-    pos = p * (n + 1)
-    idx = int(pos) - 1  # переводим в 0-индексацию
-    frac = pos - int(pos)
-    если idx < 0: берём первое значение
-    если idx >= n-1: берём последнее
-    иначе: data[idx] + frac * (data[idx+1] - data[idx])
-    """
     n = len(data)
     if n == 0:
         return np.nan
@@ -111,30 +130,25 @@ def percentile_vba(data, p):
     return data[idx] + frac * (data[idx+1] - data[idx])
 
 def filter_outliers_vba(x, y, deg, k):
-    """
-    Фильтрация по IQR с квартилями как в VBA и симметричными границами.
-    Возвращает маску (True - нормальная), а также все промежуточные значения для отладки.
-    """
     if len(x) < 3:
         return np.ones(len(x), dtype=bool), None, None, None, None, None, None, None, None
 
-    func, coeffs = polynomial_fit(x, y, deg)
-    y_fit = func(x)
+    coeffs = polyfit_vba(x, y, deg)
+    y_fit = np.polyval(coeffs[::-1], x)
     residuals = y - y_fit
 
-    # Сортируем остатки для квартилей
     sorted_res = np.sort(residuals)
-
     q1 = percentile_vba(sorted_res, 0.25)
     q3 = percentile_vba(sorted_res, 0.75)
     iqr = q3 - q1
 
-    lower_bound = q1 - k * iqr
-    upper_bound = q3 + k * iqr
+    # Границы для маски (относительно остатков) – симметричные
+    lower_delta = -k * iqr
+    upper_delta = k * iqr
 
-    mask = (residuals >= lower_bound) & (residuals <= upper_bound)
+    mask = (residuals >= lower_delta) & (residuals <= upper_delta)
 
-    return mask, func, q1, q3, iqr, lower_bound, upper_bound, coeffs, residuals
+    return mask, coeffs, q1, q3, iqr, lower_delta, upper_delta, residuals
 
 def evaluate_simplex(expr, values):
     try:
@@ -229,7 +243,6 @@ class EngineAnalyzer:
             if log_callback:
                 log_callback("Средние значения вычислены.")
 
-            # ---- Фильтрация по VBA-логике (с квартилями как в макросе) ----
             if self.apply_filter:
                 self.filter_masks = {}
                 self.filter_params = {}
@@ -243,20 +256,20 @@ class EngineAnalyzer:
                     y_valid = y[valid]
                     if len(x_valid) < 3:
                         mask = np.ones(len(y), dtype=bool)
-                        self.filter_params[param] = {"func": None, "q1": None, "q3": None, "iqr": None, "k": k}
+                        self.filter_params[param] = {"coeffs": None, "q1": None, "q3": None, "iqr": None, "k": k,
+                                                    "lower_delta": None, "upper_delta": None}
                     else:
-                        mask, func, q1, q3, iqr, lower, upper, coeffs, residuals = filter_outliers_vba(
+                        mask, coeffs, q1, q3, iqr, lower_delta, upper_delta, residuals = filter_outliers_vba(
                             x_valid, y_valid, self.poly_deg, k
                         )
                         self.filter_params[param] = {
-                            "func": func,
+                            "coeffs": coeffs,
                             "q1": q1,
                             "q3": q3,
                             "iqr": iqr,
                             "k": k,
-                            "lower": lower,
-                            "upper": upper,
-                            "coeffs": coeffs,
+                            "lower_delta": lower_delta,
+                            "upper_delta": upper_delta,
                             "residuals": residuals,
                             "x": x_valid,
                             "y": y_valid,
@@ -279,7 +292,6 @@ class EngineAnalyzer:
                 if log_callback:
                     log_callback("Фильтрация выключена, используются все блоки.")
 
-            # ---- Корреляции для ВСЕХ данных ----
             self.corr_params_all = {}
             self.corr_scatter_data_all = {}
             if len(self.avg_df) >= 3:
@@ -292,7 +304,6 @@ class EngineAnalyzer:
                         self.corr_params_all[param.upper()] = {"r": r, "p": p, "n": np.sum(valid)}
                         self.corr_scatter_data_all[param.upper()] = {"x": x_rh[valid], "y": y_vals[valid]}
 
-            # ---- Корреляции для ОТФИЛЬТРОВАННЫХ данных ----
             self.corr_params_clean = {}
             self.corr_scatter_data_clean = {}
             if len(self.clean_avg_df) >= 3:
@@ -305,7 +316,6 @@ class EngineAnalyzer:
                         self.corr_params_clean[param.upper()] = {"r": r, "p": p, "n": np.sum(valid)}
                         self.corr_scatter_data_clean[param.upper()] = {"x": x_rh[valid], "y": y_vals[valid]}
 
-            # ---- Симплекс ----
             rows_simplex = []
             for idx, block in enumerate(self.blocks):
                 if not self.clean_indices[idx]:
@@ -344,7 +354,6 @@ class EngineAnalyzer:
             if log_callback:
                 log_callback(f"Симплекс вычислен для {len(self.simplex_df)} блоков.")
 
-            # Добавляем корреляцию симплекса в оба набора
             if not self.simplex_df.empty:
                 x_sim = self.simplex_df["R/H"].values
                 y_sim = self.simplex_df["AVG"].values
@@ -356,7 +365,6 @@ class EngineAnalyzer:
                     self.corr_params_clean["Simplex AVG"] = {"r": r, "p": p, "n": np.sum(valid)}
                     self.corr_scatter_data_clean["Simplex AVG"] = {"x": x_sim[valid], "y": y_sim[valid]}
 
-            # ---- Полиномы ----
             columns = [f"cyl{i}" for i in range(1, self.cylinders + 1)] + ["AVG"]
             for col in columns:
                 x = self.simplex_df["R/H"].values
@@ -368,13 +376,12 @@ class EngineAnalyzer:
                     self.poly_results[col] = None
                     self.poly_functions[col] = None
                     continue
-                func, coeffs = polynomial_fit(x_valid, y_valid, self.poly_deg)
+                coeffs = polyfit_vba(x_valid, y_valid, self.poly_deg)
                 self.poly_results[col] = coeffs
-                self.poly_functions[col] = func
+                self.poly_functions[col] = lambda xp, c=coeffs: np.polyval(c[::-1], xp)
             if log_callback:
                 log_callback("Полиномиальная аппроксимация выполнена.")
 
-            # ---- Корреляции симплекса по цилиндрам ----
             for col in columns:
                 x = self.simplex_df["R/H"].values
                 y = self.simplex_df[col].values
@@ -389,7 +396,6 @@ class EngineAnalyzer:
             if log_callback:
                 log_callback("Корреляции симплекса вычислены.")
 
-            # ---- Частная корреляция ----
             idx_col = None
             for col in self.avg_df.columns:
                 if col.lower() == "index":
@@ -420,7 +426,6 @@ class EngineAnalyzer:
                     log_callback("Предупреждение: столбец Index не найден, частная корреляция пропущена.")
                 self.partial_corr = {}
 
-            # ---- Сохранение Excel ----
             os.makedirs(self.plot_dir, exist_ok=True)
             with pd.ExcelWriter(self.output_excel, engine="openpyxl") as writer:
                 df_avg = self.avg_df.copy()
@@ -546,16 +551,14 @@ class EngineAnalyzer:
                 label=f'{translated["outlier"]} (n={np.sum(~mask)})',
             )
             params = self.filter_params.get(param)
-            if params is not None and params["func"] is not None:
-                func = params["func"]
-                q1 = params["q1"]
-                q3 = params["q3"]
-                iqr = params["iqr"]
-                k = params["k"]
+            if params is not None and params["coeffs"] is not None:
+                coeffs = params["coeffs"]
+                lower_delta = params["lower_delta"]
+                upper_delta = params["upper_delta"]
                 x_sorted = np.sort(x)
-                y_fit = func(x_sorted)
-                lower = y_fit + (q1 - k * iqr)   # границы как в VBA: lower = fitted + q1 - k*IQR, upper = fitted + q3 + k*IQR
-                upper = y_fit + (q3 + k * iqr)
+                y_fit = np.polyval(coeffs[::-1], x_sorted)
+                lower = y_fit + lower_delta
+                upper = y_fit + upper_delta
                 ax.plot(x_sorted, y_fit, "gray", linewidth=2, label=translated["fit"])
                 ax.plot(x_sorted, lower, "r--", linewidth=1.5, label=translated["lower"])
                 ax.plot(x_sorted, upper, "r--", linewidth=1.5, label=translated["upper"])
@@ -574,6 +577,7 @@ class EngineAnalyzer:
         colors = plt.cm.tab10(np.linspace(0, 1, len(columns)))
         for idx, col in enumerate(columns):
             if self.poly_functions.get(col) is not None:
+                func = self.poly_functions[col]
                 x = self.simplex_df["R/H"].values
                 y = self.simplex_df[col].values
                 valid = ~np.isnan(y)
@@ -581,7 +585,7 @@ class EngineAnalyzer:
                 if n_points == 0:
                     continue
                 x_plot = np.linspace(min(x[valid]), max(x[valid]), 100)
-                y_plot = self.poly_functions[col](x_plot)
+                y_plot = func(x_plot)
                 ax.plot(
                     x_plot,
                     y_plot,
