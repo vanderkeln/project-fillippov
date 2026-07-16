@@ -223,7 +223,7 @@ class EngineAnalyzer:
             if log_callback:
                 log_callback(f"После фильтрации осталось {np.sum(all_good)} блоков из {len(self.avg_df)}.")
 
-            # Корреляции для всех параметров (средние)
+            # ---- Расчёт корреляций для всех параметров (средние) ----
             self.corr_params = {}
             self.corr_scatter_data = {}
             if np.sum(all_good) >= 3:
@@ -235,6 +235,8 @@ class EngineAnalyzer:
                         r, p = pearsonr(x_rh[valid], y_vals[valid])
                         self.corr_params[param.upper()] = {"r": r, "p": p, "n": np.sum(valid)}
                         self.corr_scatter_data[param.upper()] = {"x": x_rh[valid], "y": y_vals[valid]}
+                # Добавим корреляцию для симплекса (AVG) – будет добавлена позже, когда будет вычислен simplex_df
+                # но пока оставим.
 
             # Симплекс
             rows_simplex = []
@@ -275,13 +277,18 @@ class EngineAnalyzer:
             if log_callback:
                 log_callback(f"Симплекс вычислен для {len(self.simplex_df)} блоков.")
 
-            # Полиномиальная аппроксимация для симплекса
+            # Добавляем корреляцию для симплекса (AVG)
+            if not self.simplex_df.empty:
+                x_sim = self.simplex_df["R/H"].values
+                y_sim = self.simplex_df["AVG"].values
+                valid = ~np.isnan(y_sim)
+                if np.sum(valid) >= 3:
+                    r, p = pearsonr(x_sim[valid], y_sim[valid])
+                    self.corr_params["Simplex AVG"] = {"r": r, "p": p, "n": np.sum(valid)}
+                    self.corr_scatter_data["Simplex AVG"] = {"x": x_sim[valid], "y": y_sim[valid]}
+
             columns = [f"cyl{i}" for i in range(1, self.cylinders + 1)] + ["AVG"]
             for col in columns:
-                if self.simplex_df.empty:
-                    self.poly_results[col] = None
-                    self.poly_functions[col] = None
-                    continue
                 x = self.simplex_df["R/H"].values
                 y = self.simplex_df[col].values
                 valid = ~np.isnan(y)
@@ -296,12 +303,7 @@ class EngineAnalyzer:
                 self.poly_functions[col] = func
             if log_callback:
                 log_callback("Полиномиальная аппроксимация выполнена.")
-
-            # Корреляции симплекса
             for col in columns:
-                if self.simplex_df.empty:
-                    self.corr_results[col] = {"n": 0, "r": np.nan, "p": np.nan}
-                    continue
                 x = self.simplex_df["R/H"].values
                 y = self.simplex_df[col].values
                 valid = ~np.isnan(y)
@@ -314,14 +316,12 @@ class EngineAnalyzer:
                     self.corr_results[col] = {"n": len(x_clean), "r": r, "p": p}
             if log_callback:
                 log_callback("Корреляции симплекса вычислены.")
-
-            # Частные корреляции
             idx_col = None
             for col in self.avg_df.columns:
                 if col.lower() == "index":
                     idx_col = col
                     break
-            if idx_col is not None and not self.simplex_df.empty:
+            if idx_col is not None:
                 x_rh = self.avg_df.loc[self.clean_indices, "R/H"].values
                 x_index = self.avg_df.loc[self.clean_indices, idx_col].values
                 for col in columns:
@@ -343,12 +343,12 @@ class EngineAnalyzer:
                     log_callback("Частные корреляции вычислены.")
             else:
                 if log_callback:
-                    log_callback("Предупреждение: столбец Index не найден или нет данных симплекса, частная корреляция пропущена.")
+                    log_callback("Предупреждение: столбец Index не найден, частная корреляция пропущена.")
                 self.partial_corr = {}
 
             os.makedirs(self.plot_dir, exist_ok=True)
 
-            # ---- Сохранение Excel ----
+            # ---- Сохранение Excel с переведёнными заголовками ----
             with pd.ExcelWriter(self.output_excel, engine="openpyxl") as writer:
                 # Averages
                 df_avg = self.avg_df.copy()
@@ -362,7 +362,7 @@ class EngineAnalyzer:
                 df_avg.rename(columns=header_map_avg, inplace=True)
                 df_avg.to_excel(writer, sheet_name="Averages", index=False)
 
-                # Simplex
+                # Simplex (если не пуст)
                 if not self.simplex_df.empty:
                     df_sim = self.simplex_df.copy()
                     header_map_sim = {
@@ -374,8 +374,7 @@ class EngineAnalyzer:
                     df_sim.rename(columns=header_map_sim, inplace=True)
                     df_sim.to_excel(writer, sheet_name="Simplex", index=False)
 
-                # Polynomials
-                df_poly = pd.DataFrame()
+                # Polynomials (если не пуст)
                 poly_rows = []
                 for col, coeffs in self.poly_results.items():
                     if coeffs is not None:
@@ -386,11 +385,9 @@ class EngineAnalyzer:
                 if poly_rows:
                     df_poly = pd.DataFrame(poly_rows)
                     df_poly.rename(columns={"Cylinder": self._translate_header("Cylinder")}, inplace=True)
-                if not df_poly.empty:
                     df_poly.to_excel(writer, sheet_name="Polynomials", index=False)
 
-                # Correlations
-                df_corr = pd.DataFrame()
+                # Correlations (для симплекса)
                 corr_rows = []
                 for col, res in self.corr_results.items():
                     corr_rows.append({
@@ -408,14 +405,13 @@ class EngineAnalyzer:
                         "p": self._translate_header("p-value"),
                     }
                     df_corr.rename(columns=header_map_corr, inplace=True)
-                    # Добавляем столбцы для корреляций параметров
+                    # Добавляем столбцы для корреляций параметров (если они есть)
                     for param, res in self.corr_params.items():
-                        df_corr[param] = res["r"]
-                if not df_corr.empty:
+                        if param not in df_corr.columns:
+                            df_corr[param] = res["r"]
                     df_corr.to_excel(writer, sheet_name="Correlations", index=False)
 
-                # PartialCorr
-                df_pcorr = pd.DataFrame()
+                # PartialCorr (если не пуст)
                 pcorr_rows = []
                 for col, res in self.partial_corr.items():
                     pcorr_rows.append({
@@ -433,7 +429,6 @@ class EngineAnalyzer:
                         "p": self._translate_header("p-value"),
                     }
                     df_pcorr.rename(columns=header_map_pcorr, inplace=True)
-                if not df_pcorr.empty:
                     df_pcorr.to_excel(writer, sheet_name="PartialCorr", index=False)
 
             self._save_plots()
@@ -510,35 +505,33 @@ class EngineAnalyzer:
             plt.tight_layout()
             plt.savefig(os.path.join(self.plot_dir, f"filter_{param}.png"), dpi=150)
             plt.close()
-        # Тренды симплекса
-        if not self.simplex_df.empty:
-            fig, ax = plt.subplots(figsize=(12, 7))
-            columns = [f"cyl{i}" for i in range(1, self.cylinders + 1)] + ["AVG"]
-            colors = plt.cm.tab10(np.linspace(0, 1, len(columns)))
-            for idx, col in enumerate(columns):
-                if self.poly_functions.get(col) is not None:
-                    x = self.simplex_df["R/H"].values
-                    y = self.simplex_df[col].values
-                    valid = ~np.isnan(y)
-                    n_points = np.sum(valid)
-                    if n_points == 0:
-                        continue
-                    x_plot = np.linspace(min(x[valid]), max(x[valid]), 100)
-                    y_plot = self.poly_functions[col](x_plot)
-                    ax.plot(
-                        x_plot,
-                        y_plot,
-                        color=colors[idx],
-                        linewidth=2.5,
-                        label=f"{col} (n={n_points})",
-                    )
-            ax.set_xlabel(translated["xlabel"], fontsize=12)
-            ax.set_ylabel(translated["ylabel"], fontsize=12)
-            ax.set_title(
-                f'{translated["trend_title"]} ({self.numerator}/{self.denominator})', fontsize=14
-            )
-            ax.grid(True, linestyle="--", alpha=0.6)
-            ax.legend(fontsize=10)
-            plt.tight_layout()
-            plt.savefig(os.path.join(self.plot_dir, "simplex_trends.png"), dpi=150)
-            plt.close()
+        fig, ax = plt.subplots(figsize=(12, 7))
+        columns = [f"cyl{i}" for i in range(1, self.cylinders + 1)] + ["AVG"]
+        colors = plt.cm.tab10(np.linspace(0, 1, len(columns)))
+        for idx, col in enumerate(columns):
+            if self.poly_functions.get(col) is not None:
+                x = self.simplex_df["R/H"].values
+                y = self.simplex_df[col].values
+                valid = ~np.isnan(y)
+                n_points = np.sum(valid)
+                if n_points == 0:
+                    continue
+                x_plot = np.linspace(min(x[valid]), max(x[valid]), 100)
+                y_plot = self.poly_functions[col](x_plot)
+                ax.plot(
+                    x_plot,
+                    y_plot,
+                    color=colors[idx],
+                    linewidth=2.5,
+                    label=f"{col} (n={n_points})",
+                )
+        ax.set_xlabel(translated["xlabel"], fontsize=12)
+        ax.set_ylabel(translated["ylabel"], fontsize=12)
+        ax.set_title(
+            f'{translated["trend_title"]} ({self.numerator}/{self.denominator})', fontsize=14
+        )
+        ax.grid(True, linestyle="--", alpha=0.6)
+        ax.legend(fontsize=10)
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.plot_dir, "simplex_trends.png"), dpi=150)
+        plt.close()
