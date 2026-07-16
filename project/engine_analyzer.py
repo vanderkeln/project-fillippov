@@ -121,6 +121,7 @@ class EngineAnalyzer:
         k_params=None,
         lang="ru",
         translate_func=None,
+        apply_filter=True,
     ):
         self.file_path = file_path
         self.sheet_name = sheet_name
@@ -131,6 +132,7 @@ class EngineAnalyzer:
         self.k_params = k_params if k_params else {}
         self.lang = lang
         self.translate_func = translate_func
+        self.apply_filter = apply_filter
         self.df = None
         self.params = []
         self.cylinders = 0
@@ -144,8 +146,10 @@ class EngineAnalyzer:
         self.poly_results = {}
         self.poly_functions = {}
         self.corr_results = {}
-        self.corr_params = {}
-        self.corr_scatter_data = {}
+        self.corr_params_all = {}
+        self.corr_scatter_data_all = {}
+        self.corr_params_clean = {}
+        self.corr_scatter_data_clean = {}
         self.partial_corr = {}
         self.output_excel = "results.xlsx"
         self.plot_dir = "plots"
@@ -188,57 +192,79 @@ class EngineAnalyzer:
             self.avg_df = pd.DataFrame(rows)
             if log_callback:
                 log_callback("Средние значения вычислены.")
-            self.filter_masks = {}
-            self.filter_params = {}
-            all_good = np.ones(len(self.avg_df), dtype=bool)
-            for param in self.params:
-                k = self._get_k_for_param(param)
-                x = self.avg_df["R/H"].values
-                y = self.avg_df[param].values
-                valid = ~np.isnan(y)
-                x_valid = x[valid]
-                y_valid = y[valid]
-                if len(x_valid) < 3:
-                    mask = np.ones(len(y), dtype=bool)
-                    self.filter_params[param] = {"func": None, "q1": None, "q3": None, "iqr": None, "k": k}
-                else:
-                    mask, func, q1, q3, iqr, _, _ = filter_outliers(x_valid, y_valid, self.poly_deg, k)
-                    self.filter_params[param] = {
-                        "func": func,
-                        "q1": q1,
-                        "q3": q3,
-                        "iqr": iqr,
-                        "k": k,
-                        "x": x_valid,
-                        "y": y_valid,
-                    }
-                    full_mask = np.zeros(len(y), dtype=bool)
-                    full_mask[valid] = mask
-                    mask = full_mask
-                self.filter_masks[param] = mask
-                self.avg_df[f"{param}_flag"] = (~mask).astype(int)
-                all_good &= mask
-            self.clean_indices = all_good
-            self.clean_avg_df = self.avg_df[all_good].copy()
-            if log_callback:
-                log_callback(f"После фильтрации осталось {np.sum(all_good)} блоков из {len(self.avg_df)}.")
 
-            # ---- Расчёт корреляций для всех параметров (средние) ----
-            self.corr_params = {}
-            self.corr_scatter_data = {}
-            if np.sum(all_good) >= 3:
+            # ---- Фильтрация ----
+            if self.apply_filter:
+                self.filter_masks = {}
+                self.filter_params = {}
+                all_good = np.ones(len(self.avg_df), dtype=bool)
+                for param in self.params:
+                    k = self._get_k_for_param(param)
+                    x = self.avg_df["R/H"].values
+                    y = self.avg_df[param].values
+                    valid = ~np.isnan(y)
+                    x_valid = x[valid]
+                    y_valid = y[valid]
+                    if len(x_valid) < 3:
+                        mask = np.ones(len(y), dtype=bool)
+                        self.filter_params[param] = {"func": None, "q1": None, "q3": None, "iqr": None, "k": k}
+                    else:
+                        mask, func, q1, q3, iqr, _, _ = filter_outliers(x_valid, y_valid, self.poly_deg, k)
+                        self.filter_params[param] = {
+                            "func": func,
+                            "q1": q1,
+                            "q3": q3,
+                            "iqr": iqr,
+                            "k": k,
+                            "x": x_valid,
+                            "y": y_valid,
+                        }
+                        full_mask = np.zeros(len(y), dtype=bool)
+                        full_mask[valid] = mask
+                        mask = full_mask
+                    self.filter_masks[param] = mask
+                    self.avg_df[f"{param}_flag"] = (~mask).astype(int)
+                    all_good &= mask
+                self.clean_indices = all_good
+                self.clean_avg_df = self.avg_df[all_good].copy()
+                if log_callback:
+                    log_callback(f"После фильтрации осталось {np.sum(all_good)} блоков из {len(self.avg_df)}.")
+            else:
+                # Фильтрация отключена – все блоки считаются хорошими
+                self.clean_indices = np.ones(len(self.avg_df), dtype=bool)
+                self.clean_avg_df = self.avg_df.copy()
+                for param in self.params:
+                    self.avg_df[f"{param}_flag"] = 0
+                if log_callback:
+                    log_callback("Фильтрация выключена, используются все блоки.")
+
+            # ---- Корреляции для ВСЕХ данных ----
+            self.corr_params_all = {}
+            self.corr_scatter_data_all = {}
+            if len(self.avg_df) >= 3:
+                x_rh = self.avg_df["R/H"].values
+                for param in self.params:
+                    y_vals = self.avg_df[param].values
+                    valid = ~np.isnan(y_vals)
+                    if np.sum(valid) >= 3:
+                        r, p = pearsonr(x_rh[valid], y_vals[valid])
+                        self.corr_params_all[param.upper()] = {"r": r, "p": p, "n": np.sum(valid)}
+                        self.corr_scatter_data_all[param.upper()] = {"x": x_rh[valid], "y": y_vals[valid]}
+
+            # ---- Корреляции для ОТФИЛЬТРОВАННЫХ данных ----
+            self.corr_params_clean = {}
+            self.corr_scatter_data_clean = {}
+            if len(self.clean_avg_df) >= 3:
                 x_rh = self.clean_avg_df["R/H"].values
                 for param in self.params:
                     y_vals = self.clean_avg_df[param].values
                     valid = ~np.isnan(y_vals)
                     if np.sum(valid) >= 3:
                         r, p = pearsonr(x_rh[valid], y_vals[valid])
-                        self.corr_params[param.upper()] = {"r": r, "p": p, "n": np.sum(valid)}
-                        self.corr_scatter_data[param.upper()] = {"x": x_rh[valid], "y": y_vals[valid]}
-                # Добавим корреляцию для симплекса (AVG) – будет добавлена позже, когда будет вычислен simplex_df
-                # но пока оставим.
+                        self.corr_params_clean[param.upper()] = {"r": r, "p": p, "n": np.sum(valid)}
+                        self.corr_scatter_data_clean[param.upper()] = {"x": x_rh[valid], "y": y_vals[valid]}
 
-            # Симплекс
+            # ---- Симплекс ----
             rows_simplex = []
             for idx, block in enumerate(self.blocks):
                 if not self.clean_indices[idx]:
@@ -277,16 +303,20 @@ class EngineAnalyzer:
             if log_callback:
                 log_callback(f"Симплекс вычислен для {len(self.simplex_df)} блоков.")
 
-            # Добавляем корреляцию для симплекса (AVG)
+            # Добавляем корреляцию симплекса в оба набора
             if not self.simplex_df.empty:
                 x_sim = self.simplex_df["R/H"].values
                 y_sim = self.simplex_df["AVG"].values
                 valid = ~np.isnan(y_sim)
                 if np.sum(valid) >= 3:
                     r, p = pearsonr(x_sim[valid], y_sim[valid])
-                    self.corr_params["Simplex AVG"] = {"r": r, "p": p, "n": np.sum(valid)}
-                    self.corr_scatter_data["Simplex AVG"] = {"x": x_sim[valid], "y": y_sim[valid]}
+                    self.corr_params_all["Simplex AVG"] = {"r": r, "p": p, "n": np.sum(valid)}
+                    self.corr_scatter_data_all["Simplex AVG"] = {"x": x_sim[valid], "y": y_sim[valid]}
+                    # Для clean то же самое (симплекс считается только на чистых блоках)
+                    self.corr_params_clean["Simplex AVG"] = {"r": r, "p": p, "n": np.sum(valid)}
+                    self.corr_scatter_data_clean["Simplex AVG"] = {"x": x_sim[valid], "y": y_sim[valid]}
 
+            # ---- Полиномы ----
             columns = [f"cyl{i}" for i in range(1, self.cylinders + 1)] + ["AVG"]
             for col in columns:
                 x = self.simplex_df["R/H"].values
@@ -303,6 +333,8 @@ class EngineAnalyzer:
                 self.poly_functions[col] = func
             if log_callback:
                 log_callback("Полиномиальная аппроксимация выполнена.")
+
+            # ---- Корреляции симплекса по цилиндрам ----
             for col in columns:
                 x = self.simplex_df["R/H"].values
                 y = self.simplex_df[col].values
@@ -316,6 +348,8 @@ class EngineAnalyzer:
                     self.corr_results[col] = {"n": len(x_clean), "r": r, "p": p}
             if log_callback:
                 log_callback("Корреляции симплекса вычислены.")
+
+            # ---- Частная корреляция ----
             idx_col = None
             for col in self.avg_df.columns:
                 if col.lower() == "index":
@@ -346,9 +380,8 @@ class EngineAnalyzer:
                     log_callback("Предупреждение: столбец Index не найден, частная корреляция пропущена.")
                 self.partial_corr = {}
 
+            # ---- Сохранение Excel ----
             os.makedirs(self.plot_dir, exist_ok=True)
-
-            # ---- Сохранение Excel с переведёнными заголовками ----
             with pd.ExcelWriter(self.output_excel, engine="openpyxl") as writer:
                 # Averages
                 df_avg = self.avg_df.copy()
@@ -362,7 +395,7 @@ class EngineAnalyzer:
                 df_avg.rename(columns=header_map_avg, inplace=True)
                 df_avg.to_excel(writer, sheet_name="Averages", index=False)
 
-                # Simplex (если не пуст)
+                # Simplex
                 if not self.simplex_df.empty:
                     df_sim = self.simplex_df.copy()
                     header_map_sim = {
@@ -374,7 +407,7 @@ class EngineAnalyzer:
                     df_sim.rename(columns=header_map_sim, inplace=True)
                     df_sim.to_excel(writer, sheet_name="Simplex", index=False)
 
-                # Polynomials (если не пуст)
+                # Polynomials
                 poly_rows = []
                 for col, coeffs in self.poly_results.items():
                     if coeffs is not None:
@@ -387,7 +420,7 @@ class EngineAnalyzer:
                     df_poly.rename(columns={"Cylinder": self._translate_header("Cylinder")}, inplace=True)
                     df_poly.to_excel(writer, sheet_name="Polynomials", index=False)
 
-                # Correlations (для симплекса)
+                # Correlations (симплекс)
                 corr_rows = []
                 for col, res in self.corr_results.items():
                     corr_rows.append({
@@ -405,13 +438,9 @@ class EngineAnalyzer:
                         "p": self._translate_header("p-value"),
                     }
                     df_corr.rename(columns=header_map_corr, inplace=True)
-                    # Добавляем столбцы для корреляций параметров (если они есть)
-                    for param, res in self.corr_params.items():
-                        if param not in df_corr.columns:
-                            df_corr[param] = res["r"]
                     df_corr.to_excel(writer, sheet_name="Correlations", index=False)
 
-                # PartialCorr (если не пуст)
+                # PartialCorr
                 pcorr_rows = []
                 for col, res in self.partial_corr.items():
                     pcorr_rows.append({
