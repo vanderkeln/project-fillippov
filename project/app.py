@@ -35,6 +35,10 @@ LANGUAGE_NAMES_EN = {
 
 if "lang" not in st.session_state:
     st.session_state.lang = "ru"
+if "analysis_done" not in st.session_state:
+    st.session_state.analysis_done = False
+if "analyzer" not in st.session_state:
+    st.session_state.analyzer = None
 
 st.set_page_config(page_title="Engine Diagnostic", layout="wide")
 
@@ -147,6 +151,7 @@ with st.sidebar:
 
     run_btn = st.button(_(TEXTS["run"]), type="primary", use_container_width=True)
 
+# Определяем путь к файлу
 file_path = None
 if uploaded_file is not None:
     with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
@@ -158,6 +163,7 @@ elif file_name_input.strip() != "":
     else:
         st.error(_(TEXTS["file_not_found"]))
 
+# Запуск анализа
 if file_path and run_btn:
     log_container = st.container()
     log_placeholder = log_container.empty()
@@ -184,133 +190,132 @@ if file_path and run_btn:
         success = analyzer.run(log_callback=log_callback)
 
     if success:
+        st.session_state.analysis_done = True
+        st.session_state.analyzer = analyzer
         st.success(_(TEXTS["success"]))
         st.info(f"{_(TEXTS['using_sheet'])} {analyzer.used_sheet_name}")
         st.info(_(TEXTS["results_saved"]))
-
-        tab1, tab2, tab3, tab4 = st.tabs(
-            [
-                _(TEXTS["tab1"]),
-                _(TEXTS["tab2"]),
-                _(TEXTS["tab3"]),
-                _(TEXTS["tab4"]),
-            ]
-        )
-
-        with tab1:
-            if os.path.exists("results.xlsx"):
-                df = pd.read_excel("results.xlsx", sheet_name="Simplex")
-                st.dataframe(df, use_container_width=True)
-            else:
-                st.warning(_(TEXTS["no_results"]))
-
-        with tab2:
-            if os.path.exists("results.xlsx"):
-                df = pd.read_excel("results.xlsx", sheet_name="Polynomials")
-                st.dataframe(df, use_container_width=True)
-            else:
-                st.warning(_(TEXTS["no_results"]))
-
-        with tab3:
-            if not hasattr(analyzer, 'corr_params_all') or not analyzer.corr_params_all:
-                st.info(_(TEXTS["no_corr_data"]))
-            else:
-                st.subheader(_(TEXTS["corr_pearson"]))
-
-                data_source = st.radio(_(TEXTS["data_source"]), [_(TEXTS["data_clean"]), _(TEXTS["data_all"])], index=0)
-                if data_source == _(TEXTS["data_clean"]):
-                    corr_dict = analyzer.corr_params_clean
-                    scatter_dict = analyzer.corr_scatter_data_clean
-                else:
-                    corr_dict = analyzer.corr_params_all
-                    scatter_dict = analyzer.corr_scatter_data_all
-
-                if not corr_dict:
-                    st.info(_(TEXTS["no_corr_data"]))
-                else:
-                    param_options = list(corr_dict.keys())
-                    selected_param = st.selectbox(_(TEXTS["select_param"]), param_options, index=0)
-
-                    if selected_param in corr_dict:
-                        res = corr_dict[selected_param]
-                        df_show = pd.DataFrame({
-                            "Параметр": [selected_param],
-                            "n": [res["n"]],
-                            "r": [res["r"]],
-                            "p-value": [res["p"]]
-                        })
-                        st.dataframe(df_show, use_container_width=True)
-                    else:
-                        st.info("Данные для параметра не найдены.")
-
-                    # Scatter plot
-                    if selected_param in scatter_dict:
-                        data = scatter_dict[selected_param]
-                        x = data['x']
-                        y = data['y']
-                        if len(x) > 1:
-                            fig, ax = plt.subplots(figsize=(8, 5))
-                            ax.scatter(x, y, alpha=0.7, color='blue')
-                            coeffs = np.polyfit(x, y, 1)
-                            x_line = np.linspace(min(x), max(x), 100)
-                            y_line = coeffs[0] * x_line + coeffs[1]
-                            ax.plot(x_line, y_line, color='red', linestyle='--')
-                            ax.set_xlabel("R/H")
-                            ax.set_ylabel(selected_param)
-                            ax.grid(True, linestyle='--', alpha=0.6)
-                            st.pyplot(fig)
-                        else:
-                            st.info(_(TEXTS["not_enough_points"]))
-
-                # Частные корреляции
-                if os.path.exists("results.xlsx"):
-                    df_pcorr = pd.read_excel("results.xlsx", sheet_name="PartialCorr")
-                    st.subheader(_(TEXTS["corr_partial"]))
-                    st.dataframe(df_pcorr, use_container_width=True)
-
-        with tab4:
-            if os.path.exists("plots"):
-                images = [f for f in os.listdir("plots") if f.endswith(".png")]
-                if images:
-                    for img in images:
-                        st.image(os.path.join("plots", img), caption=img, use_column_width=True)
-                    zip_buffer = io.BytesIO()
-                    with zipfile.ZipFile(zip_buffer, "w") as zip_file:
-                        for img in images:
-                            zip_file.write(os.path.join("plots", img), img)
-                    zip_buffer.seek(0)
-                    st.download_button(
-                        label=_(TEXTS["download_plots"]),
-                        data=zip_buffer,
-                        file_name="plots.zip",
-                        mime="application/zip",
-                    )
-                else:
-                    st.info(_(TEXTS["no_plots"]))
-            else:
-                st.info(_(TEXTS["no_plots"]))
-
-        with open("results.xlsx", "rb") as f:
-            st.download_button(
-                label=_(TEXTS["download_results"]),
-                data=f,
-                file_name="results.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            )
-
-        if uploaded_file is not None and os.path.exists(file_path):
-            os.unlink(file_path)
-
     else:
         st.error(_(TEXTS["error"]))
 
-elif not file_path and run_btn:
-    st.error(_(TEXTS["wait_file"]))
-elif file_path and not run_btn:
+# Отображение результатов (если анализ выполнен и есть файлы)
+if st.session_state.analysis_done and os.path.exists("results.xlsx"):
+    analyzer = st.session_state.analyzer
+    tab1, tab2, tab3, tab4 = st.tabs(
+        [
+            _(TEXTS["tab1"]),
+            _(TEXTS["tab2"]),
+            _(TEXTS["tab3"]),
+            _(TEXTS["tab4"]),
+        ]
+    )
+
+    with tab1:
+        df = pd.read_excel("results.xlsx", sheet_name="Simplex")
+        st.dataframe(df, use_container_width=True)
+
+    with tab2:
+        df = pd.read_excel("results.xlsx", sheet_name="Polynomials")
+        st.dataframe(df, use_container_width=True)
+
+    with tab3:
+        if analyzer and hasattr(analyzer, 'corr_params_all') and analyzer.corr_params_all:
+            st.subheader(_(TEXTS["corr_pearson"]))
+            data_source = st.radio(_(TEXTS["data_source"]), [_(TEXTS["data_clean"]), _(TEXTS["data_all"])], index=0)
+            if data_source == _(TEXTS["data_clean"]):
+                corr_dict = analyzer.corr_params_clean
+                scatter_dict = analyzer.corr_scatter_data_clean
+            else:
+                corr_dict = analyzer.corr_params_all
+                scatter_dict = analyzer.corr_scatter_data_all
+
+            if not corr_dict:
+                st.info(_(TEXTS["no_corr_data"]))
+            else:
+                param_options = list(corr_dict.keys())
+                selected_param = st.selectbox(_(TEXTS["select_param"]), param_options, index=0)
+
+                if selected_param in corr_dict:
+                    res = corr_dict[selected_param]
+                    df_show = pd.DataFrame({
+                        "Параметр": [selected_param],
+                        "n": [res["n"]],
+                        "r": [res["r"]],
+                        "p-value": [res["p"]]
+                    })
+                    st.dataframe(df_show, use_container_width=True)
+                else:
+                    st.info("Данные для параметра не найдены.")
+
+                if selected_param in scatter_dict:
+                    data = scatter_dict[selected_param]
+                    x = data['x']
+                    y = data['y']
+                    if len(x) > 1:
+                        fig, ax = plt.subplots(figsize=(8, 5))
+                        ax.scatter(x, y, alpha=0.7, color='blue')
+                        coeffs = np.polyfit(x, y, 1)
+                        x_line = np.linspace(min(x), max(x), 100)
+                        y_line = coeffs[0] * x_line + coeffs[1]
+                        ax.plot(x_line, y_line, color='red', linestyle='--')
+                        ax.set_xlabel("R/H")
+                        ax.set_ylabel(selected_param)
+                        ax.grid(True, linestyle='--', alpha=0.6)
+                        st.pyplot(fig)
+                    else:
+                        st.info(_(TEXTS["not_enough_points"]))
+        else:
+            st.info(_(TEXTS["no_corr_data"]))
+
+        # Частные корреляции
+        if os.path.exists("results.xlsx"):
+            df_pcorr = pd.read_excel("results.xlsx", sheet_name="PartialCorr")
+            st.subheader(_(TEXTS["corr_partial"]))
+            st.dataframe(df_pcorr, use_container_width=True)
+
+    with tab4:
+        if os.path.exists("plots"):
+            images = [f for f in os.listdir("plots") if f.endswith(".png")]
+            if images:
+                for img in images:
+                    st.image(os.path.join("plots", img), caption=img, use_column_width=True)
+                zip_buffer = io.BytesIO()
+                with zipfile.ZipFile(zip_buffer, "w") as zip_file:
+                    for img in images:
+                        zip_file.write(os.path.join("plots", img), img)
+                zip_buffer.seek(0)
+                st.download_button(
+                    label=_(TEXTS["download_plots"]),
+                    data=zip_buffer,
+                    file_name="plots.zip",
+                    mime="application/zip",
+                )
+            else:
+                st.info(_(TEXTS["no_plots"]))
+        else:
+            st.info(_(TEXTS["no_plots"]))
+
+    with open("results.xlsx", "rb") as f:
+        st.download_button(
+            label=_(TEXTS["download_results"]),
+            data=f,
+            file_name="results.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+    # Удаление временного файла, если он был создан
+    if uploaded_file is not None and file_path and os.path.exists(file_path):
+        os.unlink(file_path)
+
+# Если файл загружен, но анализ не запущен
+elif file_path and not run_btn and not st.session_state.analysis_done:
     st.info(_(TEXTS["wait_run"]))
-else:
+
+# Если файл не загружен
+elif not file_path and not run_btn and not st.session_state.analysis_done:
     st.info(_(TEXTS["wait_file"]))
 
+# Отображение имени загруженного файла в сайдбаре
 if uploaded_file:
     st.sidebar.success(f"{_(TEXTS['file_loaded'])} {uploaded_file.name}")
 elif file_name_input.strip() != "" and os.path.exists(file_name_input.strip()):
