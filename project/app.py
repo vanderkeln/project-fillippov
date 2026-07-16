@@ -118,6 +118,15 @@ TEXTS = {
     "enter_at_least_one": "Введите хотя бы одно число.",
     "not_enough_points_manual": "Недостаточно точек для ручного ввода (нужно минимум 2 точки).",
     "manual_data": "Ручной ввод данных",
+    "regression_line": "Линия регрессии",
+    "prediction_interval": "95% интервал предсказания",
+    "custom_data_label": "Пользовательские данные",
+    "custom_y_label": "Пользовательский Y",
+    "parameter": "Параметр",
+    "n_label": "n",
+    "r_label": "r",
+    "p_value_label": "p-value",
+    "r_rh": "R/H",
 }
 
 def _(text):
@@ -208,7 +217,8 @@ if file_path and run_btn:
     else:
         st.error(_(TEXTS["error"]))
 
-def plot_with_prediction_interval(x, y, label, xlabel="R/H", ylabel="Y", color='blue', alpha=0.05):
+def plot_with_prediction_interval(x, y, label, xlabel, ylabel, color='blue', alpha=0.05,
+                                  reg_line_label="Линия регрессии", pred_interval_label="95% интервал предсказания"):
     if len(x) < 2:
         return None
     coeffs = np.polyfit(x, y, 1)
@@ -223,12 +233,12 @@ def plot_with_prediction_interval(x, y, label, xlabel="R/H", ylabel="Y", color='
     ax.scatter(x, y, alpha=0.7, color=color, label=label)
     x_line = np.linspace(min(x), max(x), 100)
     y_line = slope * x_line + intercept
-    ax.plot(x_line, y_line, color='red', linestyle='--', label='Линия регрессии')
+    ax.plot(x_line, y_line, color='red', linestyle='--', label=reg_line_label)
     mean_x = np.mean(x)
     se_pred = se_reg * np.sqrt(1 + 1/n + (x_line - mean_x)**2 / np.sum((x - mean_x)**2))
     ci_lower = y_line - t_val * se_pred
     ci_upper = y_line + t_val * se_pred
-    ax.fill_between(x_line, ci_lower, ci_upper, color='gray', alpha=0.2, label='95% интервал предсказания')
+    ax.fill_between(x_line, ci_lower, ci_upper, color='gray', alpha=0.2, label=pred_interval_label)
     ax.plot(x_line, ci_lower, color='gray', linestyle=':', linewidth=1.5, alpha=0.7)
     ax.plot(x_line, ci_upper, color='gray', linestyle=':', linewidth=1.5, alpha=0.7)
     ax.set_xlabel(xlabel)
@@ -278,10 +288,10 @@ if st.session_state.analysis_done and os.path.exists("results.xlsx"):
                 if selected_param in corr_dict:
                     res = corr_dict[selected_param]
                     df_show = pd.DataFrame({
-                        "Параметр": [selected_param],
-                        "n": [res["n"]],
-                        "r": [res["r"]],
-                        "p-value": [res["p"]]
+                        _(TEXTS["parameter"]): [selected_param],
+                        _(TEXTS["n_label"]): [res["n"]],
+                        _(TEXTS["r_label"]): [res["r"]],
+                        _(TEXTS["p_value_label"]): [res["p"]]
                     })
                     st.dataframe(df_show, use_container_width=True)
                     if selected_param in scatter_dict:
@@ -289,7 +299,15 @@ if st.session_state.analysis_done and os.path.exists("results.xlsx"):
                         x = data['x']
                         y = data['y']
                         if len(x) > 1:
-                            fig = plot_with_prediction_interval(x, y, label=selected_param, xlabel="R/H", ylabel=selected_param, color='blue')
+                            fig = plot_with_prediction_interval(
+                                x, y,
+                                label=selected_param,
+                                xlabel=_(TEXTS["r_rh"]),
+                                ylabel=selected_param,
+                                color='blue',
+                                reg_line_label=_(TEXTS["regression_line"]),
+                                pred_interval_label=_(TEXTS["prediction_interval"])
+                            )
                             if fig:
                                 st.pyplot(fig)
                         else:
@@ -317,13 +335,21 @@ if st.session_state.analysis_done and os.path.exists("results.xlsx"):
                             r, p = pearsonr(x_rh, custom_y)
                             n = len(custom_y)
                             df_custom = pd.DataFrame({
-                                "Параметр": ["Пользовательский"],
-                                "n": [n],
-                                "r": [r],
-                                "p-value": [p]
+                                _(TEXTS["parameter"]): ["Пользовательский"],
+                                _(TEXTS["n_label"]): [n],
+                                _(TEXTS["r_label"]): [r],
+                                _(TEXTS["p_value_label"]): [p]
                             })
                             st.dataframe(df_custom, use_container_width=True)
-                            fig = plot_with_prediction_interval(x_rh, custom_y, label="Пользовательские данные", xlabel="R/H", ylabel="Пользовательский Y", color='green')
+                            fig = plot_with_prediction_interval(
+                                x_rh, custom_y,
+                                label=_(TEXTS["custom_data_label"]),
+                                xlabel=_(TEXTS["r_rh"]),
+                                ylabel=_(TEXTS["custom_y_label"]),
+                                color='green',
+                                reg_line_label=_(TEXTS["regression_line"]),
+                                pred_interval_label=_(TEXTS["prediction_interval"])
+                            )
                             if fig:
                                 st.pyplot(fig)
                             st.caption(_(TEXTS["corr_coeff_label"]).format(r, p))
