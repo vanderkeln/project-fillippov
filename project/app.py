@@ -92,6 +92,7 @@ TEXTS = {
     "tab3": "Корреляции",
     "tab4": "Графики",
     "corr_pearson": "Корреляции Пирсона",
+    "corr_partial": "Частные корреляции (контроль по Index)",
     "download_results": "Скачать результаты (Excel)",
     "download_plots": "Скачать все графики (ZIP)",
     "no_results": "Файл результатов не найден.",
@@ -245,6 +246,20 @@ if st.session_state.analysis_done and os.path.exists("results.xlsx"):
                     })
                 df_corr = pd.DataFrame(rows)
                 st.dataframe(df_corr, use_container_width=True)
+
+            # ---- Частные корреляции ----
+            if hasattr(analyzer, 'partial_corr') and analyzer.partial_corr:
+                st.subheader(_(TEXTS["corr_partial"]))
+                rows_partial = []
+                for col, res in analyzer.partial_corr.items():
+                    rows_partial.append({
+                        _(TEXTS["parameter"]): col,
+                        _(TEXTS["n_label"]): res["n"],
+                        _(TEXTS["r_label"]): res["r"],
+                        _(TEXTS["p_value_label"]): res["p"],
+                    })
+                df_partial = pd.DataFrame(rows_partial)
+                st.dataframe(df_partial, use_container_width=True)
         else:
             st.info(_(TEXTS["no_corr_data"]))
 
